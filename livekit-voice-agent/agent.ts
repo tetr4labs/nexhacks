@@ -1,7 +1,7 @@
 import {
   type JobContext,
   type JobProcess,
-  WorkerOptions,
+  ServerOptions,
   cli,
   defineAgent,
   voice,
