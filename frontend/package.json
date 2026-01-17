@@ -11,6 +11,7 @@
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.90.1",
+    "ical.js": "^2.1.0",
     "livekit-client": "^2.17.0",
     "livekit-server-sdk": "^2.15.0",
     "next": "16.1.3",

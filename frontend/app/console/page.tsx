@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/server";
+import ImportButton from "./ImportButton";
+import EventCard from "./EventCard";
 
 // Type definitions for database entities
 interface Event {
@@ -132,12 +134,9 @@ export default async function ConsolePage() {
             </span>
           </Link>
 
-          {/* Right: Import button */}
+          {/* Right: Import button with modal */}
           <div className="flex items-center gap-3">
-            <Link href="/import" className="btn-neon-secondary flex items-center gap-2">
-              <CalendarIcon />
-              <span className="hidden sm:inline">Import .ics</span>
-            </Link>
+            <ImportButton />
           </div>
         </header>
 
@@ -302,32 +301,15 @@ function Timeline({ events }: { events: Event[] }) {
           </div>
         ) : (
           events.map((event) => (
-            <div
+            <EventCard
               key={event.id}
-              className="absolute left-1 right-1 px-3 py-2 rounded border border-[#00ffff]/30 bg-[#00ffff]/5 hover:bg-[#00ffff]/10 transition-colors cursor-pointer group"
+              id={event.id}
+              name={event.name}
+              description={event.description}
+              start={event.start}
+              end={event.end}
               style={getEventStyle(event)}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="font-mono text-sm text-[#00ffff] truncate">
-                    {event.name || "Untitled Event"}
-                  </p>
-                  <p className="text-xs text-zinc-500 mt-0.5">
-                    {formatEventTime(event.start)}
-                    {event.end && ` - ${formatEventTime(event.end)}`}
-                  </p>
-                </div>
-                {/* Hover indicator */}
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                  <span className="text-[#00ffff]/50 text-xs">▶</span>
-                </div>
-              </div>
-              {event.description && (
-                <p className="text-xs text-zinc-600 mt-1 truncate">
-                  {event.description}
-                </p>
-              )}
-            </div>
+            />
           ))
         )}
       </div>
@@ -494,27 +476,6 @@ function TetrahedronIcon() {
         stroke="#00ffff"
         strokeWidth="1"
         opacity="0.5"
-      />
-    </svg>
-  );
-}
-
-/**
- * Calendar icon for Import .ics button.
- */
-function CalendarIcon() {
-  return (
-    <svg
-      className="w-4 h-4"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
       />
     </svg>
   );
