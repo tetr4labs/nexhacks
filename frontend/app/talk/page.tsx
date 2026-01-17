@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Room, RoomEvent, RemoteParticipant, LocalParticipant, Track, RemoteTrack, RemoteTrackPublication, DataPacket_Kind } from "livekit-client";
+import {
+  Room,
+  RoomEvent,
+  RemoteParticipant,
+  Track,
+  RemoteTrack,
+  RemoteTrackPublication,
+  DataPacket_Kind,
+} from "livekit-client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -15,14 +23,18 @@ export default function TalkPage() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [transcript, setTranscript] = useState<Array<{ speaker: string; text: string; timestamp: Date }>>([]);
+  const [transcript, setTranscript] = useState<
+    Array<{ speaker: string; text: string; timestamp: Date }>
+  >([]);
   const [participants, setParticipants] = useState<string[]>([]);
   const [isWaitingForAgent, setIsWaitingForAgent] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  
+
   // Transcript buffering and debouncing refs
-  const transcriptBufferRef = useRef<Map<string, { text: string; timestamp: Date; timer: NodeJS.Timeout | null }>>(new Map());
+  const transcriptBufferRef = useRef<
+    Map<string, { text: string; timestamp: Date; timer: NodeJS.Timeout | null }>
+  >(new Map());
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Connect to LiveKit room
@@ -57,12 +69,15 @@ export default function TalkPage() {
         console.log("Connected to room:", newRoom.name);
         setIsConnected(true);
         setIsConnecting(false);
-        
+
         // Log all participants
         const allParticipants = Array.from(newRoom.remoteParticipants.values());
-        console.log("Remote participants:", allParticipants.map(p => p.identity));
-        setParticipants(allParticipants.map(p => p.identity));
-        
+        console.log(
+          "Remote participants:",
+          allParticipants.map((p) => p.identity),
+        );
+        setParticipants(allParticipants.map((p) => p.identity));
+
         // Clear error and waiting state if participants are already present
         if (allParticipants.length > 0) {
           setError(null);
@@ -85,95 +100,163 @@ export default function TalkPage() {
         }
       });
 
-      newRoom.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
-        console.log("Participant connected:", participant.identity, participant);
-        setParticipants(prev => {
-          const updated = [...prev, participant.identity];
-          // Clear error and waiting state once agent is detected
-          if (updated.length > 0) {
-            setError(null);
-            setIsWaitingForAgent(false);
-          }
-          return updated;
-        });
-        
-        // Set up track listeners for this participant
-        participant.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication: RemoteTrackPublication) => {
-          console.log("Track subscribed:", track.kind, publication.trackSid, "from", participant.identity);
-          handleTrack(track, participant.identity);
-        });
+      newRoom.on(
+        RoomEvent.ParticipantConnected,
+        (participant: RemoteParticipant) => {
+          console.log(
+            "Participant connected:",
+            participant.identity,
+            participant,
+          );
+          setParticipants((prev) => {
+            const updated = [...prev, participant.identity];
+            // Clear error and waiting state once agent is detected
+            if (updated.length > 0) {
+              setError(null);
+              setIsWaitingForAgent(false);
+            }
+            return updated;
+          });
 
-        // Check for existing tracks
-        participant.trackPublications.forEach((publication) => {
-          if (publication.track) {
-            console.log("Existing track:", publication.kind, publication.trackSid);
-            handleTrack(publication.track as RemoteTrack, participant.identity);
-          }
-        });
-      });
+          // Set up track listeners for this participant
+          participant.on(
+            RoomEvent.TrackSubscribed,
+            (track: RemoteTrack, publication: RemoteTrackPublication) => {
+              console.log(
+                "Track subscribed:",
+                track.kind,
+                publication.trackSid,
+                "from",
+                participant.identity,
+              );
+              handleTrack(track, participant.identity);
+            },
+          );
 
-      newRoom.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
-        console.log("Participant disconnected:", participant.identity);
-        setParticipants(prev => prev.filter(id => id !== participant.identity));
-      });
+          // Check for existing tracks
+          participant.trackPublications.forEach((publication) => {
+            if (publication.track) {
+              console.log(
+                "Existing track:",
+                publication.kind,
+                publication.trackSid,
+              );
+              handleTrack(
+                publication.track as RemoteTrack,
+                participant.identity,
+              );
+            }
+          });
+        },
+      );
+
+      newRoom.on(
+        RoomEvent.ParticipantDisconnected,
+        (participant: RemoteParticipant) => {
+          console.log("Participant disconnected:", participant.identity);
+          setParticipants((prev) =>
+            prev.filter((id) => id !== participant.identity),
+          );
+        },
+      );
 
       // Handle data messages (for transcripts)
-      newRoom.on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: RemoteParticipant, kind?: DataPacket_Kind) => {
-        try {
-          const text = new TextDecoder().decode(payload);
-          console.log("Data received:", text, "from", participant?.identity);
-          
-          // Try to parse as JSON (transcript data)
+      newRoom.on(
+        RoomEvent.DataReceived,
+        (
+          payload: Uint8Array,
+          participant?: RemoteParticipant,
+          kind?: DataPacket_Kind,
+        ) => {
           try {
-            const data = JSON.parse(text);
-            if (data.text || data.transcript) {
-              addTranscript(participant?.identity || "system", data.text || data.transcript);
+            const text = new TextDecoder().decode(payload);
+            console.log("Data received:", text, "from", participant?.identity);
+
+            // Try to parse as JSON (transcript data)
+            try {
+              const data = JSON.parse(text);
+              if (data.text || data.transcript) {
+                addTranscript(
+                  participant?.identity || "system",
+                  data.text || data.transcript,
+                );
+              }
+            } catch {
+              // If not JSON, treat as plain text
+              addTranscript(participant?.identity || "system", text);
             }
-          } catch {
-            // If not JSON, treat as plain text
-            addTranscript(participant?.identity || "system", text);
+          } catch (err) {
+            console.error("Error processing data:", err);
           }
-        } catch (err) {
-          console.error("Error processing data:", err);
-        }
-      });
+        },
+      );
 
       // Register text stream handler for transcripts
       try {
-        newRoom.registerTextStreamHandler("lk.transcription", async (reader, participantInfo) => {
-          console.log("Text stream handler registered for transcription");
-          try {
-            const text = await reader.readAll();
-            console.log("Transcript received:", text, "from", participantInfo?.identity);
-            if (text) {
-              addTranscript(participantInfo?.identity || "system", text);
+        newRoom.registerTextStreamHandler(
+          "lk.transcription",
+          async (reader, participantInfo) => {
+            console.log("Text stream handler registered for transcription");
+            try {
+              const text = await reader.readAll();
+              console.log(
+                "Transcript received:",
+                text,
+                "from",
+                participantInfo?.identity,
+              );
+              if (text) {
+                addTranscript(participantInfo?.identity || "system", text);
+              }
+            } catch (err) {
+              console.error("Error reading transcript stream:", err);
             }
-          } catch (err) {
-            console.error("Error reading transcript stream:", err);
-          }
-        });
+          },
+        );
       } catch (err) {
-        console.warn("Could not register text stream handler (may not be available in this version):", err);
+        console.warn(
+          "Could not register text stream handler (may not be available in this version):",
+          err,
+        );
       }
 
       // Also listen for transcription events if available
       newRoom.on(RoomEvent.TranscriptionReceived, (transcription: any) => {
         console.log("Transcription event received:", transcription);
         if (transcription.text) {
-          addTranscript(transcription.participant?.identity || "system", transcription.text);
+          addTranscript(
+            transcription.participant?.identity || "system",
+            transcription.text,
+          );
         }
       });
 
       // Handle local track published
       newRoom.localParticipant.on(RoomEvent.TrackPublished, (publication) => {
-        console.log("Local track published:", publication.kind, publication.trackSid);
+        console.log(
+          "Local track published:",
+          publication.kind,
+          publication.trackSid,
+        );
       });
 
       // Listen for all track subscriptions (including from remote participants)
-      newRoom.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
-        console.log("Track subscribed event:", track.kind, "from", participant.identity);
-        handleTrack(track, participant.identity);
-      });
+      newRoom.on(
+        RoomEvent.TrackSubscribed,
+        (
+          track: RemoteTrack,
+          publication: RemoteTrackPublication,
+          participant: RemoteParticipant,
+        ) => {
+          console.log(
+            "Track subscribed event:",
+            track.kind,
+            "from",
+            participant.identity,
+          );
+          handleTrack(track, participant.identity);
+        },
+      );
 
       // Trigger agent to join (create room/job)
       try {
@@ -186,7 +269,10 @@ export default function TalkPage() {
           console.log("Agent trigger sent");
         }
       } catch (triggerErr) {
-        console.warn("Could not trigger agent (may join automatically):", triggerErr);
+        console.warn(
+          "Could not trigger agent (may join automatically):",
+          triggerErr,
+        );
       }
 
       // Connect to room
@@ -203,7 +289,7 @@ export default function TalkPage() {
       }
 
       setRoom(newRoom);
-      
+
       // Periodically check for agent (every 2 seconds for up to 10 seconds)
       // The error will be cleared automatically when the agent connects via ParticipantConnected event
       let checkCount = 0;
@@ -212,9 +298,15 @@ export default function TalkPage() {
         checkCount++;
 
         // Check if room is still connected
-        if (newRoom.state === "connected") { // Properly check using string state
-          const allParticipants = Array.from(newRoom.remoteParticipants.values());
-          console.log(`[Check ${checkCount}/${maxChecks}] Participants:`, allParticipants.map(p => p.identity));
+        if (newRoom.state === "connected") {
+          // Properly check using string state
+          const allParticipants = Array.from(
+            newRoom.remoteParticipants.values(),
+          );
+          console.log(
+            `[Check ${checkCount}/${maxChecks}] Participants:`,
+            allParticipants.map((p) => p.identity),
+          );
 
           if (allParticipants.length > 0) {
             // Agent found, clear any error and stop checking
@@ -244,7 +336,7 @@ export default function TalkPage() {
   const handleTrack = (track: RemoteTrack, participantIdentity: string) => {
     if (track.kind === Track.Kind.Audio) {
       console.log("Handling audio track from:", participantIdentity, track);
-      
+
       if (!audioRef.current) {
         console.error("Audio element not available");
         return;
@@ -253,7 +345,7 @@ export default function TalkPage() {
       // Stop any existing tracks
       if (audioRef.current.srcObject) {
         const existingStream = audioRef.current.srcObject as MediaStream;
-        existingStream.getTracks().forEach(t => {
+        existingStream.getTracks().forEach((t) => {
           t.stop();
           existingStream.removeTrack(t);
         });
@@ -264,23 +356,28 @@ export default function TalkPage() {
       if (track.mediaStreamTrack) {
         stream.addTrack(track.mediaStreamTrack);
         audioRef.current.srcObject = stream;
-        
+
         // Ensure audio element is ready
         audioRef.current.volume = 1.0;
         audioRef.current.muted = false;
-        
+
         // Play audio with error handling
         const playPromise = audioRef.current.play();
         if (playPromise !== undefined) {
           playPromise
             .then(() => {
-              console.log("Audio track playing successfully from:", participantIdentity);
+              console.log(
+                "Audio track playing successfully from:",
+                participantIdentity,
+              );
             })
-            .catch(err => {
+            .catch((err) => {
               console.error("Error playing audio:", err);
               // Try again after user interaction
-              if (err.name === 'NotAllowedError') {
-                setError("Please allow audio playback in your browser settings");
+              if (err.name === "NotAllowedError") {
+                setError(
+                  "Please allow audio playback in your browser settings",
+                );
               }
             });
         }
@@ -293,145 +390,166 @@ export default function TalkPage() {
 
   // Simple similarity calculation (Jaccard similarity on words)
   // Used to detect duplicate transcript entries
-  const calculateSimilarity = useCallback((text1: string, text2: string): number => {
-    const words1 = new Set(text1.toLowerCase().trim().split(/\s+/));
-    const words2 = new Set(text2.toLowerCase().trim().split(/\s+/));
-    
-    const intersection = new Set([...words1].filter(x => words2.has(x)));
-    const union = new Set([...words1, ...words2]);
-    
-    return intersection.size / union.size;
-  }, []);
-  
+  const calculateSimilarity = useCallback(
+    (text1: string, text2: string): number => {
+      const words1 = new Set(text1.toLowerCase().trim().split(/\s+/));
+      const words2 = new Set(text2.toLowerCase().trim().split(/\s+/));
+
+      const intersection = new Set([...words1].filter((x) => words2.has(x)));
+      const union = new Set([...words1, ...words2]);
+
+      return intersection.size / union.size;
+    },
+    [],
+  );
+
   // Commit buffered transcripts to the main transcript array
   // Only commits after a pause in speech (debounced)
   const commitBufferedTranscripts = useCallback(() => {
     const buffers = Array.from(transcriptBufferRef.current.entries());
-    
+
     if (buffers.length === 0) {
       return;
     }
-    
-    setTranscript(prev => {
+
+    setTranscript((prev) => {
       // Get the last entry to check for duplicates
       const lastEntry = prev.length > 0 ? prev[prev.length - 1] : null;
-      
+
       // Process each buffered transcript
       const newEntries = buffers
         .map(([speaker, buffer]) => {
           // Check if this is a duplicate of the last entry
-          if (lastEntry && 
-              lastEntry.speaker === speaker &&
-              lastEntry.text.toLowerCase().trim() === buffer.text.toLowerCase().trim()) {
+          if (
+            lastEntry &&
+            lastEntry.speaker === speaker &&
+            lastEntry.text.toLowerCase().trim() ===
+              buffer.text.toLowerCase().trim()
+          ) {
             return null; // Skip duplicate
           }
-          
+
           // Check if this is very similar to the last entry (fuzzy duplicate)
-          if (lastEntry && 
-              lastEntry.speaker === speaker) {
+          if (lastEntry && lastEntry.speaker === speaker) {
             const similarity = calculateSimilarity(lastEntry.text, buffer.text);
-            if (similarity > 0.85) { // 85% similar = likely duplicate
+            if (similarity > 0.85) {
+              // 85% similar = likely duplicate
               return null;
             }
           }
-          
+
           return {
             speaker,
             text: buffer.text,
             timestamp: buffer.timestamp,
           };
         })
-        .filter((entry): entry is { speaker: string; text: string; timestamp: Date } => entry !== null);
-      
+        .filter(
+          (
+            entry,
+          ): entry is { speaker: string; text: string; timestamp: Date } =>
+            entry !== null,
+        );
+
       // Clear the buffers
       transcriptBufferRef.current.clear();
-      
+
       // Return updated transcript
       return [...prev, ...newEntries];
     });
   }, [calculateSimilarity]);
-  
+
   // Add transcript entry with buffering and debouncing
   // This prevents duplicate entries and waits until the user is done speaking
-  const addTranscript = useCallback((speaker: string, text: string) => {
-    // Normalize speaker name
-    const normalizedSpeaker = speaker === "agent" || speaker.includes("agent") ? "Tetra" : "You";
-    
-    // Skip empty or very short text
-    if (!text || text.trim().length < 2) {
-      return;
-    }
-    
-    // Get or create buffer entry for this speaker
-    const bufferKey = normalizedSpeaker;
-    const existingBuffer = transcriptBufferRef.current.get(bufferKey);
-    
-    // Check if this is a duplicate or very similar to existing text
-    if (existingBuffer) {
-      const existingText = existingBuffer.text.toLowerCase().trim();
-      const newText = text.toLowerCase().trim();
-      
-      // If the new text is contained in existing text, skip it (it's a partial update we already have)
-      if (existingText.includes(newText) && existingText.length > newText.length) {
+  const addTranscript = useCallback(
+    (speaker: string, text: string) => {
+      // Normalize speaker name
+      const normalizedSpeaker =
+        speaker === "agent" || speaker.includes("agent") ? "Tetra" : "You";
+
+      // Skip empty or very short text
+      if (!text || text.trim().length < 2) {
         return;
       }
-      
-      // If existing text is contained in new text, replace it (new text is more complete)
-      if (newText.includes(existingText) && newText.length > existingText.length) {
-        // Update the buffer with the more complete text
-        transcriptBufferRef.current.set(bufferKey, {
-          text: text.trim(),
-          timestamp: existingBuffer.timestamp, // Keep original timestamp
-          timer: existingBuffer.timer,
-        });
-      } else {
-        // Merge texts if they're different (partial updates)
-        // Only merge if they're from the same session (within 3 seconds)
-        const timeDiff = Date.now() - existingBuffer.timestamp.getTime();
-        if (timeDiff < 3000) {
-          // Merge: append new words that aren't already in the buffer
-          const existingWords = existingText.split(/\s+/);
-          const newWords = newText.split(/\s+/);
-          const additionalWords = newWords.filter(word => 
-            word.length > 0 && !existingWords.includes(word)
-          );
-          
-          if (additionalWords.length > 0) {
-            transcriptBufferRef.current.set(bufferKey, {
-              text: existingBuffer.text + " " + additionalWords.join(" "),
-              timestamp: existingBuffer.timestamp,
-              timer: existingBuffer.timer,
-            });
-          }
-        } else {
-          // Different session, create new buffer entry
+
+      // Get or create buffer entry for this speaker
+      const bufferKey = normalizedSpeaker;
+      const existingBuffer = transcriptBufferRef.current.get(bufferKey);
+
+      // Check if this is a duplicate or very similar to existing text
+      if (existingBuffer) {
+        const existingText = existingBuffer.text.toLowerCase().trim();
+        const newText = text.toLowerCase().trim();
+
+        // If the new text is contained in existing text, skip it (it's a partial update we already have)
+        if (
+          existingText.includes(newText) &&
+          existingText.length > newText.length
+        ) {
+          return;
+        }
+
+        // If existing text is contained in new text, replace it (new text is more complete)
+        if (
+          newText.includes(existingText) &&
+          newText.length > existingText.length
+        ) {
+          // Update the buffer with the more complete text
           transcriptBufferRef.current.set(bufferKey, {
             text: text.trim(),
-            timestamp: new Date(),
-            timer: null,
+            timestamp: existingBuffer.timestamp, // Keep original timestamp
+            timer: existingBuffer.timer,
           });
+        } else {
+          // Merge texts if they're different (partial updates)
+          // Only merge if they're from the same session (within 3 seconds)
+          const timeDiff = Date.now() - existingBuffer.timestamp.getTime();
+          if (timeDiff < 3000) {
+            // Merge: append new words that aren't already in the buffer
+            const existingWords = existingText.split(/\s+/);
+            const newWords = newText.split(/\s+/);
+            const additionalWords = newWords.filter(
+              (word) => word.length > 0 && !existingWords.includes(word),
+            );
+
+            if (additionalWords.length > 0) {
+              transcriptBufferRef.current.set(bufferKey, {
+                text: existingBuffer.text + " " + additionalWords.join(" "),
+                timestamp: existingBuffer.timestamp,
+                timer: existingBuffer.timer,
+              });
+            }
+          } else {
+            // Different session, create new buffer entry
+            transcriptBufferRef.current.set(bufferKey, {
+              text: text.trim(),
+              timestamp: new Date(),
+              timer: null,
+            });
+          }
         }
+      } else {
+        // New buffer entry
+        transcriptBufferRef.current.set(bufferKey, {
+          text: text.trim(),
+          timestamp: new Date(),
+          timer: null,
+        });
       }
-    } else {
-      // New buffer entry
-      transcriptBufferRef.current.set(bufferKey, {
-        text: text.trim(),
-        timestamp: new Date(),
-        timer: null,
-      });
-    }
-    
-    // Clear existing debounce timer
-    if (debounceTimeoutRef.current) {
-      clearTimeout(debounceTimeoutRef.current);
-    }
-    
-    // Set new debounce timer - wait 1.5 seconds of silence before committing
-    // This ensures we wait until the user is done speaking
-    debounceTimeoutRef.current = setTimeout(() => {
-      commitBufferedTranscripts();
-    }, 1500);
-  }, [commitBufferedTranscripts]);
+
+      // Clear existing debounce timer
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+
+      // Set new debounce timer - wait 1.5 seconds of silence before committing
+      // This ensures we wait until the user is done speaking
+      debounceTimeoutRef.current = setTimeout(() => {
+        commitBufferedTranscripts();
+      }, 1500);
+    },
+    [commitBufferedTranscripts],
+  );
 
   // Disconnect from room
   const disconnect = async () => {
@@ -498,11 +616,15 @@ export default function TalkPage() {
                 isConnected
                   ? "border-[#22c55e] text-[#22c55e] bg-[#22c55e]/10"
                   : isConnecting
-                  ? "border-[#fbbf24] text-[#fbbf24] bg-[#fbbf24]/10"
-                  : "border-zinc-700 text-zinc-500"
+                    ? "border-[#fbbf24] text-[#fbbf24] bg-[#fbbf24]/10"
+                    : "border-zinc-700 text-zinc-500"
               }`}
             >
-              {isConnected ? "CONNECTED" : isConnecting ? "CONNECTING..." : "DISCONNECTED"}
+              {isConnected
+                ? "CONNECTED"
+                : isConnecting
+                  ? "CONNECTING..."
+                  : "DISCONNECTED"}
             </span>
           </div>
         </header>
@@ -527,13 +649,21 @@ export default function TalkPage() {
                   />
                   <polygon
                     points="50,10 50,60 10,90"
-                    fill={isConnected ? "rgba(0,255,255,0.2)" : "rgba(0,255,255,0.05)"}
+                    fill={
+                      isConnected
+                        ? "rgba(0,255,255,0.2)"
+                        : "rgba(0,255,255,0.05)"
+                    }
                     stroke={isConnected ? "#00ffff" : "#00ffff/30"}
                     strokeWidth="1"
                   />
                   <polygon
                     points="50,10 50,60 90,90"
-                    fill={isConnected ? "rgba(0,255,255,0.1)" : "rgba(0,255,255,0.02)"}
+                    fill={
+                      isConnected
+                        ? "rgba(0,255,255,0.1)"
+                        : "rgba(0,255,255,0.02)"
+                    }
                     stroke={isConnected ? "#00ffff" : "#00ffff/30"}
                     strokeWidth="1"
                   />
@@ -544,7 +674,9 @@ export default function TalkPage() {
             {/* Status message */}
             <div className="mb-8">
               {error ? (
-                <div className="text-red-400 font-mono text-sm mb-4">{error}</div>
+                <div className="text-red-400 font-mono text-sm mb-4">
+                  {error}
+                </div>
               ) : isConnected ? (
                 <>
                   <p className="text-[#00ffff] font-mono text-lg mb-2">
@@ -618,11 +750,18 @@ export default function TalkPage() {
                 ) : (
                   <div className="space-y-3">
                     {transcript.map((entry, i) => (
-                      <div key={i} className="border-l-2 border-[#00ffff]/30 pl-3">
+                      <div
+                        key={i}
+                        className="border-l-2 border-[#00ffff]/30 pl-3"
+                      >
                         <div className="flex items-center gap-2 mb-1">
-                          <span className={`font-mono text-xs uppercase ${
-                            entry.speaker === "Tetra" ? "text-[#00ffff]" : "text-[#ff00ff]"
-                          }`}>
+                          <span
+                            className={`font-mono text-xs uppercase ${
+                              entry.speaker === "Tetra"
+                                ? "text-[#00ffff]"
+                                : "text-[#ff00ff]"
+                            }`}
+                          >
                             {entry.speaker}:
                           </span>
                           <span className="text-xs text-zinc-600">
@@ -642,11 +781,11 @@ export default function TalkPage() {
         </main>
 
         {/* Audio element for agent audio */}
-        <audio 
-          ref={audioRef} 
-          autoPlay 
+        <audio
+          ref={audioRef}
+          autoPlay
           playsInline
-          style={{ display: 'none' }}
+          style={{ display: "none" }}
         />
       </div>
     </div>

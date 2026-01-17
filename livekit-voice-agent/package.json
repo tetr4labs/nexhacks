@@ -21,8 +21,11 @@
     "@livekit/agents": "~1.0.36",
     "@livekit/agents-plugin-google": "~1.0.36",
     "@livekit/agents-plugin-livekit": "~1.0.36",
+    "@livekit/agents-plugin-openai": "^1.0.36",
     "@livekit/agents-plugin-silero": "~1.0.36",
     "@livekit/noise-cancellation-node": "~0.1.9",
-    "dotenv": "^17.2.3"
+    "@supabase/supabase-js": "^2.90.1",
+    "dotenv": "^17.2.3",
+    "zod": "^4.3.5"
   }
 }
