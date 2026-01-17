@@ -21,9 +21,9 @@ import {
       console.log("[Agent] VAD loaded");
     },
     entry: async (ctx: JobContext) => {
-      console.log("[Agent] Job received! Room:", ctx.room.name, "Participant:", ctx.participant?.identity);
+      console.log("[Agent] Job received! Room:", ctx.room.name, "Participant:", ctx.job.participant?.identity);
       const vad = ctx.proc.userData.vad! as silero.VAD;
-      
+
       const assistant = new voice.Agent({
           instructions: 'You are a helpful voice AI assistant.',
       });
