@@ -1,7 +1,48 @@
 # nexhacks
 
-run the frontend:
+## Setup
+
+### Frontend Environment Variables
+
+Create `frontend/.env.local` with:
+```bash
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+LIVEKIT_URL=your_livekit_url
+LIVEKIT_API_KEY=your_livekit_api_key
+LIVEKIT_API_SECRET=your_livekit_api_secret
+```
+
+### LiveKit Agent Environment Variables
+
+Create `livekit-voice-agent/.env.local` with your LiveKit credentials and API keys for:
+- AssemblyAI (for STT)
+- OpenAI (for LLM)
+- Cartesia (for TTS)
+
+## Running
+
+**Run the frontend:**
 ```bash
 cd frontend
 npm run dev
 ```
+
+**Run LiveKit voice agent:**
+```bash
+cd livekit-voice-agent
+# First time: download model files
+pnpm download-files
+# Then run in dev mode
+pnpm dev
+```
+
+## Using the Voice Interface
+
+1. Start both the frontend and LiveKit agent
+2. Navigate to `/console` and click "Talk to Tetra"
+3. Click "Connect to Tetra" on the talk page
+4. Allow microphone permissions when prompted
+5. Start speaking - Tetra will respond!
+
+The agent will automatically join the room when you connect.

@@ -1,0 +1,27 @@
+{
+  "name": "livekit-voice-agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "tsx agent.ts dev",
+    "download-files": "tsx agent.ts download-files"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.28.0",
+  "type": "module",
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@livekit/agents": "~1.0.36",
+    "@livekit/agents-plugin-livekit": "~1.0.36",
+    "@livekit/agents-plugin-silero": "~1.0.36",
+    "@livekit/noise-cancellation-node": "~0.1.9",
+    "dotenv": "^17.2.3"
+  }
+}
