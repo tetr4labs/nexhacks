@@ -99,7 +99,7 @@ export default function TalkPage() {
         
         // Set up track listeners for this participant
         participant.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication: RemoteTrackPublication) => {
-          console.log("Track subscribed:", track.kind, track.trackSid, "from", participant.identity);
+          console.log("Track subscribed:", track.kind, publication.trackSid, "from", participant.identity);
           handleTrack(track, participant.identity);
         });
 
@@ -210,12 +210,12 @@ export default function TalkPage() {
       const maxChecks = 5; // Check 5 times over 10 seconds
       const checkInterval = setInterval(() => {
         checkCount++;
-        
+
         // Check if room is still connected
-        if (newRoom.state === 1) { // Connected
+        if (newRoom.state === "connected") { // Properly check using string state
           const allParticipants = Array.from(newRoom.remoteParticipants.values());
           console.log(`[Check ${checkCount}/${maxChecks}] Participants:`, allParticipants.map(p => p.identity));
-          
+
           if (allParticipants.length > 0) {
             // Agent found, clear any error and stop checking
             setError(null);
@@ -287,10 +287,8 @@ export default function TalkPage() {
       } else {
         console.warn("Track has no mediaStreamTrack:", track);
       }
-    } else if (track.kind === Track.Kind.Data) {
-      console.log("Data track received from:", participantIdentity);
-      // Data tracks are handled via DataReceived event
     }
+    // Note: Data is handled via DataReceived event (see line 121), not as a track kind
   };
 
   // Simple similarity calculation (Jaccard similarity on words)
