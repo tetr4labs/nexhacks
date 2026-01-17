@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 // Tetra app metadata
 export const metadata: Metadata = {
-  title: "Tetra | Your Day, Compiled",
+  title: "Tetra",
   description: "A cyberpunk voice assistant that turns spoken intentions into a structured day plan and keeps you accountable.",
   keywords: ["voice assistant", "productivity", "scheduling", "accountability", "AI"],
 };
