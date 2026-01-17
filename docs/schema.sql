@@ -101,3 +101,56 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE TRIGGER update_user_profiles_updated_at
     BEFORE UPDATE ON public.user_profiles
     FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+CREATE TABLE public.events (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  start timestamp with time zone,
+  end timestamp with time zone,
+  name text,
+  description text,
+  owner uuid,
+  CONSTRAINT events_pkey PRIMARY KEY (id),
+  CONSTRAINT events_owner_fkey FOREIGN KEY (owner) REFERENCES public.user_profiles(id)
+);
+
+CREATE TABLE public.tasks (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  name text,
+  description text,
+  owner uuid,
+  due timestamp with time zone,
+  done boolean,
+  CONSTRAINT tasks_pkey PRIMARY KEY (id),
+  CONSTRAINT tasks_owner_fkey FOREIGN KEY (owner) REFERENCES public.user_profiles(id)
+);
+
+-- Enable RLS on the main data tables
+ALTER TABLE public.events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+
+-- Policy for Events: Users can only see/edit events where they are the owner
+CREATE POLICY "Users can manage their own events"
+    ON public.events
+    FOR ALL -- Covers SELECT, INSERT, UPDATE, DELETE
+    USING (auth.uid() = owner)
+    WITH CHECK (auth.uid() = owner);
+
+-- Policy for Tasks: Users can only see/edit tasks where they are the owner
+CREATE POLICY "Users can manage their own tasks"
+    ON public.tasks
+    FOR ALL
+    USING (auth.uid() = owner)
+    WITH CHECK (auth.uid() = owner);
+
+-- Update the foreign key to point to auth.users directly
+ALTER TABLE public.events 
+  DROP CONSTRAINT events_owner_fkey,
+  ADD CONSTRAINT events_owner_fkey FOREIGN KEY (owner) REFERENCES auth.users(id);
+
+ALTER TABLE public.tasks 
+  DROP CONSTRAINT tasks_owner_fkey,
+  ADD CONSTRAINT tasks_owner_fkey FOREIGN KEY (owner) REFERENCES auth.users(id);
+  
