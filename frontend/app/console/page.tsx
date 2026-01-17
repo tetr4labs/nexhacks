@@ -119,12 +119,21 @@ export default async function ConsolePage() {
             </div>
           </div>
 
-          {/* Action buttons */}
+          {/* Center: Talk to Tetra button with tetrahedron */}
+          <Link 
+            href="/talk" 
+            className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 group"
+          >
+            <div className="w-12 h-12 relative group-hover:scale-110 transition-transform duration-300">
+              <TetrahedronIcon />
+            </div>
+            <span className="font-mono text-xs text-[#00ffff] uppercase tracking-wider opacity-70 group-hover:opacity-100 transition-opacity">
+              Talk to Tetra
+            </span>
+          </Link>
+
+          {/* Right: Import button */}
           <div className="flex items-center gap-3">
-            <Link href="/talk" className="btn-neon-primary flex items-center gap-2">
-              <MicrophoneIcon />
-              <span className="hidden sm:inline">Talk to Tetra</span>
-            </Link>
             <Link href="/import" className="btn-neon-secondary flex items-center gap-2">
               <CalendarIcon />
               <span className="hidden sm:inline">Import .ics</span>
@@ -439,21 +448,52 @@ function TasksList({ tasks }: { tasks: Task[] }) {
 }
 
 /**
- * Microphone icon for Talk to Tetra button.
+ * Tetrahedron icon for Talk to Tetra button.
+ * Animated SVG with glowing effect on hover.
  */
-function MicrophoneIcon() {
+function TetrahedronIcon() {
   return (
-    <svg
-      className="w-4 h-4"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+    <svg viewBox="0 0 100 100" className="w-full h-full">
+      {/* Outer triangle */}
+      <polygon
+        points="50,10 10,90 90,90"
+        fill="none"
+        stroke="#00ffff"
+        strokeWidth="2"
+        className="animate-pulse-glow"
+      />
+      {/* Inner 3D face - left */}
+      <polygon
+        points="50,10 50,60 10,90"
+        fill="rgba(0,255,255,0.1)"
+        stroke="#00ffff"
+        strokeWidth="1"
+      />
+      {/* Inner 3D face - right */}
+      <polygon
+        points="50,10 50,60 90,90"
+        fill="rgba(0,255,255,0.05)"
+        stroke="#00ffff"
+        strokeWidth="1"
+      />
+      {/* Bottom edge */}
+      <line
+        x1="50"
+        y1="60"
+        x2="10"
+        y2="90"
+        stroke="#00ffff"
+        strokeWidth="1"
+        opacity="0.5"
+      />
+      <line
+        x1="50"
+        y1="60"
+        x2="90"
+        y2="90"
+        stroke="#00ffff"
+        strokeWidth="1"
+        opacity="0.5"
       />
     </svg>
   );
