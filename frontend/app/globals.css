@@ -1,26 +1,319 @@
 @import "tailwindcss";
 
+/* =============================================
+   Tetra Cyberpunk Theme
+   ============================================= */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Base colors - dark theme */
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  
+  /* Neon accent colors */
+  --neon-cyan: #00ffff;
+  --neon-magenta: #ff00ff;
+  --neon-purple: #a855f7;
+  
+  /* Glass panel colors */
+  --glass-bg: rgba(20, 20, 30, 0.6);
+  --glass-border: rgba(0, 255, 255, 0.15);
+  
+  /* Text colors */
+  --text-primary: #ededed;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  
+  /* Status colors */
+  --success: #22c55e;
+  --warning: #eab308;
+  --error: #ef4444;
 }
 
+/* Tailwind theme integration */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-neon-cyan: var(--neon-cyan);
+  --color-neon-magenta: var(--neon-magenta);
+  --color-neon-purple: var(--neon-purple);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* =============================================
+   Base Styles
+   ============================================= */
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* =============================================
+   Cyberpunk Background Effects
+   ============================================= */
+
+/* Subtle grid pattern overlay */
+.cyber-grid {
+  background-image: 
+    linear-gradient(rgba(0, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+/* Scanline effect overlay */
+.scanlines::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15),
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Noise texture overlay */
+.noise::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  opacity: 0.02;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* =============================================
+   Glass Panel Effect
+   ============================================= */
+
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+}
+
+/* =============================================
+   Neon Glow Effects
+   ============================================= */
+
+/* Cyan glow effect */
+.glow-cyan {
+  box-shadow: 
+    0 0 5px rgba(0, 255, 255, 0.3),
+    0 0 20px rgba(0, 255, 255, 0.2),
+    0 0 40px rgba(0, 255, 255, 0.1);
+}
+
+/* Magenta glow effect */
+.glow-magenta {
+  box-shadow: 
+    0 0 5px rgba(255, 0, 255, 0.3),
+    0 0 20px rgba(255, 0, 255, 0.2),
+    0 0 40px rgba(255, 0, 255, 0.1);
+}
+
+/* Text glow effects */
+.text-glow-cyan {
+  text-shadow: 
+    0 0 10px rgba(0, 255, 255, 0.8),
+    0 0 20px rgba(0, 255, 255, 0.5),
+    0 0 30px rgba(0, 255, 255, 0.3);
+}
+
+.text-glow-magenta {
+  text-shadow: 
+    0 0 10px rgba(255, 0, 255, 0.8),
+    0 0 20px rgba(255, 0, 255, 0.5),
+    0 0 30px rgba(255, 0, 255, 0.3);
+}
+
+/* =============================================
+   Button Styles
+   ============================================= */
+
+/* Primary neon button */
+.btn-neon-primary {
+  background: linear-gradient(135deg, rgba(0, 255, 255, 0.1), rgba(0, 255, 255, 0.05));
+  border: 1px solid rgba(0, 255, 255, 0.5);
+  color: var(--neon-cyan);
+  padding: 0.75rem 1.5rem;
+  border-radius: 4px;
+  font-family: var(--font-geist-mono), monospace;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.btn-neon-primary:hover {
+  background: linear-gradient(135deg, rgba(0, 255, 255, 0.2), rgba(0, 255, 255, 0.1));
+  box-shadow: 
+    0 0 10px rgba(0, 255, 255, 0.4),
+    0 0 30px rgba(0, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.btn-neon-primary:active {
+  transform: translateY(0);
+}
+
+.btn-neon-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Secondary button */
+.btn-neon-secondary {
+  background: transparent;
+  border: 1px solid rgba(255, 0, 255, 0.4);
+  color: var(--neon-magenta);
+  padding: 0.75rem 1.5rem;
+  border-radius: 4px;
+  font-family: var(--font-geist-mono), monospace;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.btn-neon-secondary:hover {
+  background: rgba(255, 0, 255, 0.1);
+  box-shadow: 
+    0 0 10px rgba(255, 0, 255, 0.3),
+    0 0 30px rgba(255, 0, 255, 0.15);
+}
+
+/* =============================================
+   Input Styles
+   ============================================= */
+
+.input-cyber {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  color: var(--text-primary);
+  font-family: var(--font-geist-mono), monospace;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.input-cyber::placeholder {
+  color: var(--text-muted);
+}
+
+.input-cyber:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+}
+
+.input-cyber:invalid:not(:placeholder-shown) {
+  border-color: var(--error);
+}
+
+/* =============================================
+   Typography
+   ============================================= */
+
+/* Terminal-style monospace text */
+.font-terminal {
+  font-family: var(--font-geist-mono), 'Fira Code', 'SF Mono', monospace;
+}
+
+/* Status prefix styling */
+.status-prefix {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.7;
+}
+
+/* =============================================
+   Animations
+   ============================================= */
+
+/* Pulse animation for active elements */
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+  }
+  50% {
+    opacity: 0.8;
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.8);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Fade in animation */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.5s ease-out forwards;
+}
+
+/* Staggered fade in for lists */
+.stagger-fade-in > * {
+  opacity: 0;
+  animation: fade-in 0.5s ease-out forwards;
+}
+
+.stagger-fade-in > *:nth-child(1) { animation-delay: 0.1s; }
+.stagger-fade-in > *:nth-child(2) { animation-delay: 0.2s; }
+.stagger-fade-in > *:nth-child(3) { animation-delay: 0.3s; }
+.stagger-fade-in > *:nth-child(4) { animation-delay: 0.4s; }
+.stagger-fade-in > *:nth-child(5) { animation-delay: 0.5s; }
+
+/* Glitch effect for headings */
+@keyframes glitch {
+  0%, 90%, 100% {
+    clip-path: inset(0 0 0 0);
+    transform: translate(0);
+  }
+  92% {
+    clip-path: inset(10% 0 60% 0);
+    transform: translate(-2px, 2px);
+  }
+  94% {
+    clip-path: inset(40% 0 30% 0);
+    transform: translate(2px, -2px);
+  }
+  96% {
+    clip-path: inset(70% 0 10% 0);
+    transform: translate(-1px, 1px);
+  }
+  98% {
+    clip-path: inset(20% 0 50% 0);
+    transform: translate(1px, -1px);
+  }
+}
+
+.glitch-hover:hover {
+  animation: glitch 0.3s ease-in-out;
 }
