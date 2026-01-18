@@ -1641,8 +1641,8 @@ export default function ConsoleClient({
               />
               {isConnected ? "AGENT CONNECTED" : "SYSTEM ONLINE"}
             </span>
-            <span className="opacity-50">|</span>
-            <span className="uppercase tracking-wider">
+            {/* <span className="opacity-50">|</span> */}
+            {/* <span className="uppercase tracking-wider">
               {selectedDay
                 .toLocaleDateString("en-US", {
                   weekday: "long",
@@ -1651,7 +1651,7 @@ export default function ConsoleClient({
                   day: "numeric",
                 })
                 .toUpperCase()}
-            </span>
+            </span> */}
             <span className="opacity-50">|</span>
             <span className="opacity-80">
               {localEvents?.length || 0} EVENTS • {tasks.length} TASKS
