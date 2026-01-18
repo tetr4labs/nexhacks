@@ -53,12 +53,15 @@ export default function TaskModal({
     if (task?.due) {
       setHasDueTime(true);
       setDueTime(formatTimeInput(new Date(task.due)));
+    } else if (mode === "create") {
+      setHasDueTime(true);
+      setDueTime("23:59");
     } else {
       setHasDueTime(false);
-      setDueTime("");
+      setDueTime("23:59");
     }
     setLocalError(null);
-  }, [isOpen, task]);
+  }, [isOpen, mode, task]);
 
   if (!isOpen) {
     return null;
@@ -166,7 +169,13 @@ export default function TaskModal({
               <input
                 type="checkbox"
                 checked={hasDueTime}
-                onChange={(event) => setHasDueTime(event.target.checked)}
+                onChange={(event) => {
+                  const isChecked = event.target.checked;
+                  setHasDueTime(isChecked);
+                  if (isChecked && !dueTime) {
+                    setDueTime("23:59");
+                  }
+                }}
                 disabled={isSaving}
                 className="h-4 w-4 border border-white/50 bg-black"
               />
