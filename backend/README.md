@@ -9,5 +9,5 @@ uv sync
 uv run agent.py download-files
 
 # run the agent
-uv run agent.py
+uv run agent.py start
 ```
