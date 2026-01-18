@@ -12,6 +12,7 @@ from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
+    AutoSubscribe,
     JobContext,
     JobProcess,
     cli,
@@ -26,10 +27,9 @@ from livekit.plugins import (
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from supabase import Client, ClientOptions, create_client
 
-# MCP (Arcade Gateway -> Gmail tools)
-# Note: LiveKit Agents requires the optional `mcp` extra for this import to work:
-#   pip install 'livekit-agents[mcp]'
-from livekit.agents.llm.mcp import MCPServerHTTP
+# Arcade SDK for direct Gmail tool calls (bypasses MCP which has timing issues)
+# This is the same approach used by read_gmail.py, which works reliably.
+from arcadepy import Arcade
 
 logger = logging.getLogger("Tetra")
 
@@ -37,12 +37,28 @@ load_dotenv(".env.local")
 
 
 class TetraAgent(Agent):
-    def __init__(self, room: rtc.Room):
+    def __init__(self, room: rtc.Room, arcade_user_id: Optional[str] = None):
         self.room = room
+        # NOTE: `Agent` already exposes a read-only `.session` property internally.
+        # We keep our own reference for convenience without clobbering the base property.
+        self._session: Optional[AgentSession] = None
         # These are hydrated in `on_enter`. In practice the agent can enter the room
         # slightly before the user, so we also lazily hydrate them in tool calls.
         self.user_id: Optional[str] = None
         self.supabase: Optional[Client] = None
+        
+        # Arcade SDK client for direct Gmail tool calls (bypasses MCP timing issues).
+        # This uses the same approach as read_gmail.py which works reliably.
+        arcade_api_key = os.environ.get("ARCADE_API_KEY")
+        self._arcade_client: Optional[Arcade] = Arcade(api_key=arcade_api_key) if arcade_api_key else None
+        # Arcade user ID for OAuth token scoping (should match email used in console OAuth flow).
+        self._arcade_user_id: Optional[str] = arcade_user_id
+        
+        # Cache Gmail integration state to avoid repeated DB calls within a conversation.
+        # Format: {"state": "connected"|"not_connected"|"snoozed", "checked_at": datetime}
+        self._gmail_state_cache: Optional[dict] = None
+        # How long to cache Gmail state (seconds). Short enough to pick up reconnects.
+        self._gmail_cache_ttl: int = 30
 
         super().__init__(
             instructions=f"""\
@@ -55,73 +71,44 @@ OPERATIONAL PARAMETERS
 - TIME FORMAT: 12-hour clock (2 pm).
 - DATE FORMAT: Natural/Relative.
 
-EMAIL (GMAIL) CAPABILITIES (READ-ONLY):
-- You MAY use Arcade Gmail tools to read/summarize emails if available.
-- IMPORTANT: This agent is a voice assistant. Prefer short, skimmable summaries.
-- NEVER send emails, create drafts, delete, label, or modify the user's mailbox.
-- TOOL YOU MUST USE FOR GMAIL AUTH UI: `prompt_gmail_connect`
-  - Calling `prompt_gmail_connect` triggers the console UI to show the bottom-right
-    "Gmail Integration" connect box with the Arcade authorization link.
-  - If Gmail is not connected (or a Gmail tool requires authorization), you MUST call
-    `prompt_gmail_connect` (do NOT just talk about the console UI).
-  - After calling it, tell the user: "Click Connect in the bottom-right Gmail prompt, finish sign-in, and I’ll retry."
-- When summarizing emails, do NOT read long bodies aloud; summarize and offer to open details.
-- Use these read-only tools when needed:
-  - Gmail.ListEmails (recent messages)
-  - Gmail.ListEmailsByHeader (filter by sender/subject)
-  - Gmail.GetThread (when the user asks about the full conversation)
+EMAIL (GMAIL) WORKFLOW:
+When the user asks about email (inbox, messages, Gmail, etc.):
 
-EMAIL ROUTING RULE (IMPORTANT):
-- If the user's request is about EMAIL (e.g. "inbox", "email", "Gmail", "message", "thread",
-  "sender", "subject", "unread", "search my email"), then DO NOT call calendar/task database tools
-  like `get_day_context`. Use Gmail tools instead.
-- CRITICAL: Before attempting ANY Gmail/email tool, ALWAYS call `get_gmail_integration_state` first.
-  If it returns "GMAIL_SNOOZED", do NOT use Gmail tools. Tell the user their Gmail is snoozed
-  and they can reconnect from the console UI.
+1. Call `get_gmail_integration_state` ONCE to check status.
+2. Based on the result:
+   - GMAIL_CONNECTED: Use `list_emails` (for recent mail), `search_emails` (to filter), or `get_email_thread` (for details).
+   - GMAIL_NOT_CONNECTED: Call `prompt_gmail_connect`, say "Click Connect in the bottom-right."
+   - GMAIL_SNOOZED: Say "You've snoozed Gmail. Reconnect from the console when ready."
+   - GMAIL_TOOLS_UNAVAILABLE: Say "Gmail tools are temporarily unavailable. Try again in a moment."
 
-GMAIL TOOL-CALLING PLAYBOOK (STRICT):
-- If the user asks anything email-related and Gmail is not confirmed connected:
-  1) Call `get_gmail_integration_state`.
-  2) If the result contains "GMAIL_NOT_CONNECTED" or says the state is unknown/not initialized:
-     - Immediately call `prompt_gmail_connect(reason="<brief reason>")`.
-     - Do NOT attempt Gmail.* tools yet.
-     - Tell the user to click Connect in the bottom-right prompt, finish sign-in, then ask you to retry.
-  3) If the result contains "GMAIL_SNOOZED":
-     - Do NOT call Gmail.* tools.
-     - Tell the user Gmail is snoozed and they can reconnect from the console.
-  4) Only if the result says "connected" may you call Gmail.* tools.
+3. IMPORTANT: Only call `get_gmail_integration_state` ONCE per conversation turn. Do NOT retry.
+4. If `list_emails` or `search_emails` fails, tell the user briefly and suggest trying again later.
+5. Keep summaries SHORT (this is voice). Offer more details if asked.
+6. READ-ONLY: Never send, delete, or modify emails.
 
-EXAMPLE (YOU MUST FOLLOW THIS PATTERN):
-- User: "Check my inbox"
-  - You: (call `get_gmail_integration_state`)
-  - If not connected: (call `prompt_gmail_connect`), then say: "Click Connect in the bottom-right Gmail prompt..."
+CALENDAR & TASK WORKFLOW:
+- "Book/Schedule" -> check `get_day_context` then `schedule_event`
+- "Remind me/Task" -> `create_task`
+- "Change/Move" -> `update_event` or `update_task`
+- "Cancel/Delete" -> `delete_event` or `delete_task`
+- Always check `get_day_context` before scheduling to avoid conflicts.
 
-CORE DIRECTIVES:
-1. SEMANTIC TRANSLATION:
-   - "Book/Schedule" -> `schedule_event`
-   - "Remind me/Task" -> `create_task`
-   - "Change/Move/Reschedule" -> `update_event` or `update_task`
-   - "Cancel/Delete" -> `delete_event` or `delete_task`
-
-2. ASPIRATION TO ACTION:
-   - If the user implies a goal, check `get_day_context` and propose a time.
-
-3. CONFLICT HANDLING:
-   - Check `get_day_context` before booking.
-   - If updating an event, confirm the new details are correct.
+ROUTING:
+- Email requests -> Gmail workflow
+- Calendar/task requests -> Calendar workflow
 
 ERROR HANDLING:
-- If a tool fails, explain why briefly.""",
+- If a tool fails, briefly explain and offer alternatives. Do NOT retry the same tool repeatedly.""",
         )
 
-    async def on_enter(self):
+    async def on_enter(self) -> None:
         """
         LiveKit Agents calls `Agent.on_enter()` with **no arguments** in the version used
         by this repo.
 
         We still want access to the `AgentSession` object (to generate greetings, etc.).
         The session is available via an internal contextvar set by LiveKit right before
-        calling `on_enter()`, so we hydrate `self.session` from there.
+        calling `on_enter()`, so we read it from there.
         """
         # NOTE: This is an internal LiveKit context var, but it's the most reliable way
         # to stay compatible with the installed `livekit-agents` behavior.
@@ -138,7 +125,12 @@ ERROR HANDLING:
             logger.warning("on_enter() called but AgentSession was not available; skipping greeting.")
             return
 
-        self.session = session
+        # IMPORTANT:
+        # - Do NOT assign to `self.session`. In livekit-agents 1.3.x, `Agent.session` is a
+        #   read-only property managed by the framework. Assigning to it throws:
+        #     AttributeError: property 'session' of 'TetraAgent' object has no setter
+        # - Store it on a private field instead.
+        self._session = session
         logger.info("Agent joined room. Hydrating user session...")
 
         # Hydrate Supabase/user context. IMPORTANT: the agent can join before the user;
@@ -151,11 +143,18 @@ ERROR HANDLING:
             )
             asyncio.create_task(self._ensure_user_and_supabase(max_wait_seconds=120))
 
-        # 4. Generate Greeting
-        await self.session.generate_reply(
-            instructions="Greet the user and offer your assistance.",
-            allow_interruptions=True,
-        )
+        # Generate greeting, but handle case where session is already closing
+        # (e.g., participant disconnected during hydration).
+        try:
+            await session.generate_reply(
+                instructions="Greet the user and offer your assistance.",
+                allow_interruptions=True,
+            )
+        except RuntimeError as e:
+            if "closing" in str(e).lower():
+                logger.warning("Session closed before greeting could be generated; skipping.")
+            else:
+                raise
 
     async def _ensure_user_and_supabase(self, max_wait_seconds: int = 10) -> bool:
         """
@@ -495,22 +494,35 @@ ERROR HANDLING:
     @function_tool()
     async def get_gmail_integration_state(self):
         """
-        Check if the user has snoozed Gmail integration.
-        ALWAYS call this BEFORE attempting any Gmail/email tool.
-        If snoozed, do NOT attempt Gmail tools - tell the user their Gmail is snoozed.
+        Check if the user's Gmail integration is connected, snoozed, or not set up.
+        
+        Returns one of:
+        - "GMAIL_CONNECTED" - proceed with Gmail tools (Gmail.ListEmails, etc.)
+        - "GMAIL_NOT_CONNECTED" - call prompt_gmail_connect first
+        - "GMAIL_SNOOZED" - user disabled Gmail, don't use Gmail tools
+        
+        This result is cached for 30 seconds to avoid repeated DB calls.
         """
-        logger.info("Checking Gmail integration state...")
-        # This tool depends on the `user_profiles` table; ensure Supabase is hydrated.
-        # This avoids the common "agent joined before user" race.
+        # Check if we have a recent cached result to avoid repeated DB calls.
+        now = datetime.now()
+        if self._gmail_state_cache:
+            cached_at = self._gmail_state_cache.get("checked_at")
+            if cached_at and (now - cached_at).total_seconds() < self._gmail_cache_ttl:
+                state = self._gmail_state_cache.get("state", "unknown")
+                logger.debug(f"Using cached Gmail state: {state}")
+                return self._format_gmail_state_response(state)
+        
+        logger.info("Checking Gmail integration state (fresh lookup)...")
+        
+        # Ensure Supabase is hydrated. This avoids the "agent joined before user" race.
         hydrated = await self._ensure_user_and_supabase(max_wait_seconds=3)
         if not hydrated or not getattr(self, "supabase", None) or not getattr(self, "user_id", None):
-            return (
-                "Gmail integration state: unknown (not fully initialized yet). "
-                "If you want Gmail features, open the console UI and click **Connect Gmail** "
-                "when prompted."
-            )
+            # Cache as unknown so we don't retry immediately.
+            self._gmail_state_cache = {"state": "unknown", "checked_at": now}
+            return self._format_gmail_state_response("unknown")
+        
         try:
-            # Query user profile for gmail_snoozed_until
+            # Query user profile for gmail_snoozed_until and gmail_connected.
             response = (
                 self.supabase.table("user_profiles")
                 .select("gmail_snoozed_until, gmail_connected")
@@ -521,39 +533,66 @@ ERROR HANDLING:
             
             profile = response.data
             if not profile:
-                return "Gmail integration state: unknown (no profile). You may attempt Gmail tools."
+                # No profile row yet - treat as not connected.
+                self._gmail_state_cache = {"state": "not_connected", "checked_at": now}
+                return self._format_gmail_state_response("not_connected")
             
             snoozed_until = profile.get("gmail_snoozed_until")
             is_connected = profile.get("gmail_connected", False)
             
-            # Check if snooze is active
+            # Check if snooze is currently active.
             if snoozed_until:
                 try:
                     snooze_dt = datetime.fromisoformat(snoozed_until.replace("Z", "+00:00"))
                     if snooze_dt > datetime.now(snooze_dt.tzinfo):
-                        # User has snoozed Gmail integration
-                        return (
-                            "GMAIL_SNOOZED: The user has snoozed Gmail integration. "
-                            "Do NOT attempt Gmail tools. Tell them: 'You've snoozed Gmail integration. "
-                            "You can reconnect it anytime from the console.'"
-                        )
+                        self._gmail_state_cache = {"state": "snoozed", "checked_at": now}
+                        return self._format_gmail_state_response("snoozed")
                 except Exception:
-                    # If timestamp parsing fails, don't block the user—treat as not snoozed.
+                    # Parsing failed - treat as not snoozed.
                     logger.warning("Failed to parse gmail_snoozed_until; treating as not snoozed.")
             
-            # Return connected status
-            if is_connected:
-                return "Gmail integration: connected. You may use Gmail tools."
-            else:
-                return (
-                    "GMAIL_NOT_CONNECTED: Gmail isn't connected yet. "
-                    "Call `prompt_gmail_connect` so the user can click Connect in the console UI, "
-                    "then retry the Gmail request."
-                )
+            # Determine final state based on gmail_connected flag.
+            state = "connected" if is_connected else "not_connected"
+            self._gmail_state_cache = {"state": state, "checked_at": now}
+            return self._format_gmail_state_response(state)
                 
         except Exception as e:
             logger.error(f"Error checking Gmail state: {e}")
-            return f"Could not check Gmail state: {str(e)}. You may attempt Gmail tools."
+            # On error, cache as unknown briefly to avoid hammering the DB.
+            self._gmail_state_cache = {"state": "unknown", "checked_at": now}
+            return self._format_gmail_state_response("unknown")
+
+    def _format_gmail_state_response(self, state: str, tools_available: bool = True) -> str:
+        """Format a consistent response string based on Gmail state and tool availability."""
+        # If Arcade SDK is not configured, override the response regardless of DB state.
+        if not tools_available:
+            return (
+                "GMAIL_TOOLS_UNAVAILABLE: Gmail tools (list_emails, search_emails, etc.) are not configured. "
+                "This is a setup issue. Tell the user: 'Gmail tools are temporarily unavailable. "
+                "Try reconnecting or ask again in a moment.'"
+            )
+        
+        if state == "connected":
+            return (
+                "GMAIL_CONNECTED: Gmail is connected and ready. "
+                "You can now use list_emails, search_emails, or get_email_thread."
+            )
+        elif state == "snoozed":
+            return (
+                "GMAIL_SNOOZED: The user has snoozed Gmail integration. "
+                "Do NOT use Gmail tools. Tell them they can reconnect from the console when ready."
+            )
+        elif state == "not_connected":
+            return (
+                "GMAIL_NOT_CONNECTED: Gmail is not connected. "
+                "Call prompt_gmail_connect to show the auth UI, then tell the user to click Connect."
+            )
+        else:
+            # Unknown state - allow Gmail tools to try (they'll fail with auth error if needed).
+            return (
+                "GMAIL_UNKNOWN: Could not determine Gmail status. "
+                "You may try Gmail tools - they will fail gracefully if not authorized."
+            )
 
     async def _publish_ui_event(self, event: str, payload: dict) -> bool:
         """
@@ -601,7 +640,7 @@ ERROR HANDLING:
         """
         # Keep the user-facing message short; the frontend has the actual Connect button + OAuth flow.
         fallback_text = (
-            "Gmail isn’t connected yet. Please click **Connect** in the bottom-right Gmail prompt, "
+            "Gmail isn't connected yet. Please click Connect in the bottom-right Gmail prompt, "
             "finish sign-in, then tell me to retry."
         )
 
@@ -621,6 +660,203 @@ ERROR HANDLING:
             )
         return fallback_text
 
+    # --- GMAIL TOOLS (via Arcade SDK, NOT MCP) ---
+    # These use the Arcade SDK directly, bypassing the MCP layer which has timing/connection issues.
+    # This is the same approach used by read_gmail.py and works reliably.
+
+    def _call_arcade_tool(self, tool_name: str, tool_input: dict) -> dict:
+        """
+        Call an Arcade tool using the SDK directly (synchronous).
+        
+        This bypasses the MCP layer which has timing issues in LiveKit sessions.
+        Same approach as read_gmail.py, which works reliably.
+        """
+        if not self._arcade_client:
+            return {"error": "Arcade client not configured. Set ARCADE_API_KEY in backend/.env.local"}
+        
+        if not self._arcade_user_id:
+            return {"error": "Arcade user ID not set. Cannot scope OAuth tokens."}
+        
+        try:
+            # Execute the tool call directly via Arcade SDK.
+            # The OAuth token is already stored in Arcade under this user_id (from console auth flow).
+            res = self._arcade_client.tools.execute(
+                tool_name=tool_name,
+                input=tool_input,
+                user_id=self._arcade_user_id,
+            )
+            
+            # Arcade responses typically put tool output under `res.output.value`.
+            output = getattr(getattr(res, "output", None), "value", None)
+            if output is not None:
+                return output
+            
+            # Fallback: check if there's an error or return raw response.
+            if hasattr(res, "error") and res.error:
+                return {"error": str(res.error)}
+            
+            return {"result": str(res)}
+            
+        except Exception as e:
+            error_msg = str(e)
+            # Common error: user hasn't authorized Gmail yet.
+            if "authorization" in error_msg.lower() or "not authorized" in error_msg.lower():
+                return {"error": "Gmail not authorized. User needs to click Connect in the console."}
+            return {"error": f"Arcade tool call failed: {error_msg}"}
+
+    @function_tool()
+    async def list_emails(
+        self,
+        n_emails: Annotated[int, "Number of recent emails to fetch (1-20)"] = 5,
+    ):
+        """
+        List the user's most recent emails from Gmail.
+        
+        Returns a list of emails with sender, subject, date, and snippet.
+        Use this after confirming Gmail is connected via get_gmail_integration_state.
+        """
+        logger.info(f"Listing {n_emails} recent emails via Arcade SDK")
+        
+        # Clamp to reasonable range.
+        n_emails = max(1, min(20, n_emails))
+        
+        # Call Arcade Gmail tool synchronously (the SDK is sync, run in executor to not block).
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self._call_arcade_tool("Gmail.ListEmails", {"n_emails": n_emails})
+        )
+        
+        # Check for errors.
+        if isinstance(result, dict) and "error" in result:
+            return f"Gmail error: {result['error']}"
+        
+        # Format emails for voice output (keep it concise).
+        emails = result.get("emails") if isinstance(result, dict) else None
+        if not emails:
+            return "No emails found or unable to retrieve emails."
+        
+        # Build a voice-friendly summary.
+        summary_parts = [f"Found {len(emails)} recent emails:"]
+        for i, email in enumerate(emails[:n_emails], 1):
+            if not isinstance(email, dict):
+                continue
+            sender = email.get("from") or email.get("sender") or "Unknown sender"
+            subject = email.get("subject") or "(no subject)"
+            # Truncate long subjects for voice.
+            if len(subject) > 60:
+                subject = subject[:57] + "..."
+            summary_parts.append(f"{i}. From {sender}: {subject}")
+        
+        return "\n".join(summary_parts)
+
+    @function_tool()
+    async def search_emails(
+        self,
+        sender: Annotated[Optional[str], "Filter by sender email address"] = None,
+        subject: Annotated[Optional[str], "Filter by subject text"] = None,
+        limit: Annotated[int, "Maximum number of results (1-20)"] = 10,
+    ):
+        """
+        Search emails by sender and/or subject.
+        
+        At least one of sender or subject must be provided.
+        Use this after confirming Gmail is connected via get_gmail_integration_state.
+        """
+        if not sender and not subject:
+            return "Please provide at least a sender or subject to search for."
+        
+        logger.info(f"Searching emails: sender={sender}, subject={subject}, limit={limit}")
+        
+        # Build tool input.
+        tool_input = {"limit": max(1, min(20, limit))}
+        if sender:
+            tool_input["sender"] = sender
+        if subject:
+            tool_input["subject"] = subject
+        
+        # Call Arcade Gmail tool.
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self._call_arcade_tool("Gmail.ListEmailsByHeader", tool_input)
+        )
+        
+        # Check for errors.
+        if isinstance(result, dict) and "error" in result:
+            return f"Gmail search error: {result['error']}"
+        
+        # Format results.
+        emails = None
+        if isinstance(result, dict):
+            emails = result.get("emails_by_header") or result.get("emails")
+        
+        if not emails:
+            search_desc = []
+            if sender:
+                search_desc.append(f"from {sender}")
+            if subject:
+                search_desc.append(f"about '{subject}'")
+            return f"No emails found {' '.join(search_desc)}."
+        
+        # Build voice-friendly summary.
+        summary_parts = [f"Found {len(emails)} matching emails:"]
+        for i, email in enumerate(emails[:limit], 1):
+            if not isinstance(email, dict):
+                continue
+            sender_addr = email.get("from") or email.get("sender") or "Unknown"
+            subj = email.get("subject") or "(no subject)"
+            if len(subj) > 50:
+                subj = subj[:47] + "..."
+            summary_parts.append(f"{i}. From {sender_addr}: {subj}")
+        
+        return "\n".join(summary_parts)
+
+    @function_tool()
+    async def get_email_thread(
+        self,
+        thread_id: Annotated[str, "The Gmail thread ID to retrieve"],
+    ):
+        """
+        Get the full content of an email thread by its ID.
+        
+        Use this to read the full body of an email when the user asks for more details.
+        Thread IDs can be obtained from list_emails or search_emails results.
+        """
+        logger.info(f"Fetching email thread: {thread_id}")
+        
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self._call_arcade_tool("Gmail.GetThread", {"thread_id": thread_id})
+        )
+        
+        if isinstance(result, dict) and "error" in result:
+            return f"Error fetching thread: {result['error']}"
+        
+        # Format thread for voice (summarize if too long).
+        if isinstance(result, dict):
+            messages = result.get("messages") or []
+            if not messages:
+                return "Thread found but no messages in it."
+            
+            parts = [f"Thread has {len(messages)} message(s):"]
+            for msg in messages[:3]:  # Limit to first 3 for voice.
+                if isinstance(msg, dict):
+                    sender = msg.get("from") or "Unknown"
+                    body = msg.get("body") or msg.get("snippet") or ""
+                    # Truncate body for voice.
+                    if len(body) > 200:
+                        body = body[:197] + "..."
+                    parts.append(f"From {sender}: {body}")
+            
+            if len(messages) > 3:
+                parts.append(f"...and {len(messages) - 3} more messages.")
+            
+            return "\n".join(parts)
+        
+        return str(result)
+
 
 server = AgentServer()
 
@@ -632,88 +868,97 @@ def prewarm(proc: JobProcess):
 server.setup_fnc = prewarm
 
 
+async def _derive_arcade_user_id(ctx: JobContext, max_wait_seconds: int = 10) -> str:
+    """
+    Derive a stable Arcade user ID for OAuth token scoping.
+    
+    CRITICAL: This MUST match the user ID used in the console OAuth flow.
+    The console uses `user.email || user.id` (see /api/gmail/authorize).
+    
+    Preference order:
+    1) Supabase JWT email (matches the console's Arcade scoping)
+    2) Supabase user id (participant identity)
+    3) Room name fallback (`room-${user.id}` convention)
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max_wait_seconds
+
+    while loop.time() < deadline:
+        for p in ctx.room.remote_participants.values():
+            # Skip other agents.
+            if p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+                continue
+
+            # Try to read Supabase JWT from participant metadata (set by /api/livekit-token).
+            user_token = ""
+            try:
+                if p.metadata:
+                    data = json.loads(p.metadata)
+                    user_token = data.get("supabase_token") or ""
+            except Exception:
+                # Fallback if metadata is just the raw token string.
+                user_token = p.metadata or ""
+
+            if user_token:
+                # Decode email from JWT (same helper used by TetraAgent).
+                email = _email_from_jwt(user_token)
+                if email:
+                    return email
+
+            # If we found the human user but couldn't decode an email, fall back to their ID.
+            if getattr(p, "identity", None):
+                return p.identity
+
+        await asyncio.sleep(0.2)
+
+    # Last-resort fallback: room name convention is `room-${user.id}`.
+    rid = ctx.room.name or ""
+    if rid.startswith("room-"):
+        rid = rid.removeprefix("room-")
+    return rid
+
+
+def _email_from_jwt(jwt_token: str) -> Optional[str]:
+    """
+    Extract the user's email from a Supabase JWT without verifying the signature.
+    
+    Used to match the Arcade user ID to the one used in the console OAuth flow.
+    """
+    try:
+        parts = jwt_token.split(".")
+        if len(parts) < 2:
+            return None
+        payload_b64 = parts[1]
+        # base64url decode with padding
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload_json = base64.urlsafe_b64decode(payload_b64.encode("utf-8")).decode("utf-8")
+        payload = json.loads(payload_json)
+        email = payload.get("email")
+        return email if isinstance(email, str) and email else None
+    except Exception:
+        return None
+
+
 @server.rtc_session(agent_name="Tetra")
 async def entrypoint(ctx: JobContext):
-    agent = TetraAgent(ctx.room)
+    # CRITICAL: connect the agent participant to the room immediately.
+    # If we don't call this, LiveKit will warn:
+    # "The room connection was not established within 10 seconds..."
+    # and the frontend will never see the agent as a remote participant.
+    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
-    # Optional: connect this agent to Arcade's MCP Gateway so the LLM can call Gmail tools.
-    #
-    # Required env vars (backend/.env.local):
-    # - ARCADE_MCP_URL: e.g. https://api.arcade.dev/mcp/<YOUR_GATEWAY_SLUG>
-    # - ARCADE_API_KEY: used as Authorization: Bearer <key>
-    #
-    # User scoping:
-    # - Arcade stores OAuth tokens per `Arcade-User-ID`, so we pass a stable per-user value.
-    # - In this repo we name rooms like `room-${user.id}` (Supabase user id),
-    #   so we derive Arcade-User-ID from the room name.
-    arcade_mcp_url = os.environ.get("ARCADE_MCP_URL")
-    arcade_api_key = os.environ.get("ARCADE_API_KEY")
+    # Derive Arcade user ID for OAuth token scoping.
+    # This MUST match the email used in the console OAuth flow (see /api/gmail/authorize).
+    # We wait for the human participant to join so we can extract their email from the JWT.
+    arcade_user_id = await _derive_arcade_user_id(ctx)
+    logger.info(f"Arcade SDK user scope resolved to: {arcade_user_id}")
 
-    mcp_servers = []
-    if arcade_mcp_url and arcade_api_key:
-        # Arcade stores OAuth tokens per `Arcade-User-ID`. If Arcade is configured to verify
-        # against Arcade.dev users, this should usually be the user's email.
-        #
-        # We try to derive email from the Supabase JWT stored in the LiveKit participant metadata.
-        # If the user hasn't joined yet, we fall back to the room name (uuid) so the agent can start.
-        arcade_user_id: str = ""
-
-        async def _derive_arcade_user_id(max_wait_seconds: int = 10) -> str:
-            attempts = max(1, int(max_wait_seconds / 0.2))
-            for _ in range(attempts):
-                for p in ctx.room.remote_participants.values():
-                    if p.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
-                        # Try to read Supabase JWT from participant metadata (set by frontend).
-                        user_token = ""
-                        try:
-                            if p.metadata:
-                                data = json.loads(p.metadata)
-                                user_token = data.get("supabase_token") or ""
-                        except Exception:
-                            user_token = p.metadata or ""
-                        if user_token:
-                            email = agent._email_from_supabase_jwt(user_token)
-                            if email:
-                                return email
-                await asyncio.sleep(0.2)
-
-            # Fallback: room name convention is `room-${user.id}`
-            rid = ctx.room.name or ""
-            if rid.startswith("room-"):
-                rid = rid.removeprefix("room-")
-            return rid
-
-        arcade_user_id = await _derive_arcade_user_id(max_wait_seconds=10)
-
-        # Restrict to read-only Gmail tools so the voice agent can't send/modify email.
-        allowed_tools = [
-            "Gmail.WhoAmI",
-            "Gmail.ListEmails",
-            "Gmail.ListEmailsByHeader",
-            "Gmail.ListThreads",
-            "Gmail.SearchThreads",
-            "Gmail.GetThread",
-        ]
-
-        mcp_servers = [
-            MCPServerHTTP(
-                url=arcade_mcp_url,
-                # Arcade MCP Gateways support streamable HTTP; this avoids legacy SSE quirks.
-                transport_type="streamable_http",
-                allowed_tools=allowed_tools,
-                headers={
-                    "Authorization": f"Bearer {arcade_api_key}",
-                    # Arcade uses this header to scope OAuth tokens per application user.
-                    "Arcade-User-ID": arcade_user_id,
-                },
-                timeout=10,
-            )
-        ]
-    elif arcade_mcp_url or arcade_api_key:
-        # Partial config: log a hint rather than crashing the agent.
-        logger.warning(
-            "Arcade MCP is partially configured. Set BOTH ARCADE_MCP_URL and ARCADE_API_KEY to enable Gmail tools."
-        )
+    # Create agent with Arcade user ID for direct Gmail tool calls.
+    # We use the Arcade SDK directly instead of MCP because:
+    # 1. MCP has timing issues (CancelledError before tools list)
+    # 2. The SDK approach is simpler and more reliable
+    # 3. This is the same approach as read_gmail.py which works flawlessly
+    agent = TetraAgent(ctx.room, arcade_user_id=arcade_user_id)
 
     session = AgentSession(
         stt=inference.STT(
@@ -727,8 +972,14 @@ async def entrypoint(ctx: JobContext):
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=True,
-        # Expose Arcade tools (like Gmail) via MCP to the LLM.
-        mcp_servers=mcp_servers,
+        # Gmail tools are now implemented as direct function_tools using Arcade SDK,
+        # so we don't need MCP servers anymore. This avoids the CancelledError issues.
+        # IMPORTANT: Increase max_tool_steps from default of 3.
+        # Default is too low for Gmail workflows which need:
+        # 1. get_gmail_integration_state (check auth)
+        # 2. list_emails or search_emails
+        # 3+ potential follow-up tools
+        max_tool_steps=15,
     )
 
     logger.info("Starting session")
