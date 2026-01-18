@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import json
 from dateutil import parser
 import os
 import logging
@@ -21,21 +22,11 @@ from livekit.plugins import (
     silero,
 )
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from supabase import Client, create_client
+from supabase import Client, ClientOptions, create_client
 
 logger = logging.getLogger("Tetra")
 
 load_dotenv(".env.local")
-
-
-def format_date(date):
-    try:
-        dt_object = parser.parse(date)
-    except parser.ParserError:
-        # Fallback: If the LLM sends "tomorrow" literally, return a helpful error
-        # guiding it back to specific dates, or handle relative logic here.
-        return f"I couldn't understand the date '{date}'. Please provide the date in YYYY-MM-DD format."
-    return dt_object.strftime("%Y-%m-%d")
 
 
 class TetraAgent(Agent):
@@ -245,6 +236,42 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name="Tetra")
 async def entrypoint(ctx: JobContext):
+    await ctx.connect()
+
+    logger.info("Waiting for participant...")
+    participant = await ctx.wait_for_participant()
+
+    user_token = ""
+    try:
+        user_token = participant.metadata.get("supabase_token")
+    except:
+        pass
+
+    if not user_token:
+        # If the metadata is just a raw string (sometimes happens), try parsing it
+        try:
+            meta_dict = json.loads(participant.metadata)
+            user_token = meta_dict.get("supabase_token")
+        except:
+            pass
+
+    if not user_token:
+        logger.error("No Supabase token found in participant metadata.")
+        # Decide here if you want to disconnect or proceed with restricted access.
+        # For now, we proceed but DB calls might fail if RLS is strict.
+
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_ANON_KEY")
+
+    # CHANGED: Initialize client with specific user headers
+    # This ensures Postgres RLS sees the request as coming from this specific User ID
+    client_options = ClientOptions(
+        headers={"Authorization": f"Bearer {user_token}"}
+    )
+
+    authenticated_client = create_client(
+        url, key, options=client_options)  # type: ignore
+
     session = AgentSession(
         stt=inference.STT(
             model="assemblyai/universal-streaming", language="en"),

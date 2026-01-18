@@ -1,32 +1,30 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { AccessToken } from 'livekit-server-sdk';
-import { createClient } from '@/lib/supabase/server';
+import { NextRequest, NextResponse } from "next/server";
+import { AccessToken } from "livekit-server-sdk";
+import { createClient } from "@/lib/supabase/server";
 
 /**
  * API route to generate LiveKit access tokens for authenticated users.
- * 
- * Required environment variables:
+ * * Required environment variables:
  * - LIVEKIT_URL: Your LiveKit server URL
  * - LIVEKIT_API_KEY: Your LiveKit API key
  * - LIVEKIT_API_SECRET: Your LiveKit API secret
- * 
- * GET /api/livekit-token?room=<room_name>
+ * * GET /api/livekit-token?room=<room_name>
  */
 export async function GET(request: NextRequest) {
   try {
-    // Get authenticated user (auth check handled by middleware)
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
 
-    // Safety check (should never happen due to middleware, but TypeScript needs it)
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    // CHANGED: valid user check via getSession() is required
+    // to actually extract the raw JWT 'access_token'.
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session || !session.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const user = session.user;
 
     // Get LiveKit credentials from environment
     const livekitUrl = process.env.LIVEKIT_URL;
@@ -35,15 +33,15 @@ export async function GET(request: NextRequest) {
 
     if (!livekitUrl || !apiKey || !apiSecret) {
       return NextResponse.json(
-        { error: 'LiveKit credentials not configured' },
-        { status: 500 }
+        { error: "LiveKit credentials not configured" },
+        { status: 500 },
       );
     }
 
     // Get room name from query params (default to user ID)
     const { searchParams } = new URL(request.url);
-    const roomName = searchParams.get('room') || `room-${user.id}`;
-    const participantName = user.email?.split('@')[0] || `user-${user.id}`;
+    const roomName = searchParams.get("room") || `room-${user.id}`;
+    const participantName = user.email?.split("@")[0] || `user-${user.id}`;
 
     console.log("Generating token for user:", user.id);
     console.log("Room:", roomName);
@@ -52,6 +50,9 @@ export async function GET(request: NextRequest) {
     const token = new AccessToken(apiKey, apiSecret, {
       identity: user.id,
       name: participantName,
+      metadata: JSON.stringify({
+        supabase_token: session.access_token,
+      }),
     });
 
     // Grant permissions
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
       canPublish: true,
       canSubscribe: true,
       canPublishData: true,
-      roomAdmin: true, // Allow user to manage participants (e.g. remove stuck agents)
+      roomAdmin: true,
     });
 
     // Generate token string
@@ -73,10 +74,10 @@ export async function GET(request: NextRequest) {
       room: roomName,
     });
   } catch (error) {
-    console.error('Error generating LiveKit token:', error);
+    console.error("Error generating LiveKit token:", error);
     return NextResponse.json(
-      { error: 'Failed to generate token' },
-      { status: 500 }
+      { error: "Failed to generate token" },
+      { status: 500 },
     );
   }
 }
