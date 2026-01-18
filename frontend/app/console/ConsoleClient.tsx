@@ -1598,7 +1598,7 @@ export default function ConsoleClient({
                 className="w-full h-full object-contain"
               />
             </div>
-            <div className="flex flex-col">
+            <div className="hidden sm:flex sm:flex-col">
               <span className="font-mono text-lg font-bold text-white tracking-[0.2em] uppercase">
                 TETRA OS
               </span>
@@ -1612,7 +1612,7 @@ export default function ConsoleClient({
           <button
             onClick={startTalking}
             disabled={isConnecting}
-            className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 group pt-12 pb-4 cursor-pointer disabled:cursor-wait"
+            className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 group pt-12 pb-8 md:pb-4 cursor-pointer disabled:cursor-wait"
             style={{ color: "rgb(253, 247, 228)" }}
           >
             {/* Tetrahedron icon with glow effect */}
@@ -1689,7 +1689,7 @@ export default function ConsoleClient({
         </div>
 
         {/* Main dashboard content */}
-        <main className="flex-1 p-8 md:p-12 min-h-0 overflow-hidden">
+        <main className="flex-1 px-4 py-6 md:p-12 min-h-0 overflow-hidden">
           {/* 
             Layout grid:
             - When transcript is closed: 2 equal columns (calendar + tasks)
@@ -1697,14 +1697,14 @@ export default function ConsoleClient({
             - Mobile: stacks vertically
           */}
           <div
-            className={`grid gap-8 h-full min-h-0 max-w-[1800px] mx-auto ${
+            className={`grid gap-6 md:gap-8 h-full min-h-0 max-w-[1800px] mx-auto ${
               isTranscriptOpen
                 ? "grid-cols-1 lg:grid-cols-[2fr_2fr_1fr]"
                 : "grid-cols-1 lg:grid-cols-2"
             }`}
           >
             {/* Timeline Panel (Calendar) */}
-            <div className="glass-panel p-8 flex flex-col border-2 border-white min-h-0">
+            <div className="glass-panel p-4 sm:p-6 lg:p-8 flex flex-col border-2 border-white min-h-0">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-4">
                   <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white">
@@ -1727,7 +1727,7 @@ export default function ConsoleClient({
             {/* Tasks + System Feed Panel (middle column) */}
             <div className="flex flex-col gap-8 min-h-0">
               {/* Tasks Panel */}
-              <div className="glass-panel p-8 flex-1 border-2 border-white min-h-0">
+              <div className="glass-panel p-4 sm:p-6 lg:p-8 flex-1 border-2 border-white min-h-0">
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white">
                     TASKS
@@ -1747,7 +1747,7 @@ export default function ConsoleClient({
               </div>
 
               {/* System Feed Panel - kept under tasks as requested */}
-              <div className="glass-panel p-8 h-48 border-2 border-white order-last md:order-none">
+              <div className="glass-panel p-4 sm:p-6 lg:p-8 h-48 border-2 border-white order-last md:order-none">
                 <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white opacity-60 mb-6">
                   SYSTEM FEED
                 </h2>
@@ -1774,7 +1774,7 @@ export default function ConsoleClient({
 
             {/* Transcript/Voice Panel (right column) - only shown when open */}
             {isTranscriptOpen && (
-              <div className="glass-panel p-6 flex flex-col border-2 border-white min-h-0 animate-fade-in">
+              <div className="glass-panel p-4 sm:p-6 flex flex-col border-2 border-white min-h-0 animate-fade-in">
                 {/* Header with controls */}
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white">
