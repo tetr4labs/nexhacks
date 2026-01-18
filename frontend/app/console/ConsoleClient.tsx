@@ -403,6 +403,35 @@ export default function ConsoleClient({
       setIsTaskSaving(false);
     }
   }, [activeTask, getUserId, supabase]);
+
+  const handleToggleTaskDone = useCallback(
+    async (task: Task) => {
+      setTaskError(null);
+      try {
+        const userId = await getUserId();
+        const nextDone = !task.done;
+        const { data, error } = await supabase
+          .from("tasks")
+          .update({ done: nextDone })
+          .eq("id", task.id)
+          .eq("owner", userId)
+          .select("id, name, description, due, done")
+          .single();
+
+        if (error) throw error;
+        if (data) {
+          setTasks((prev) =>
+            prev.map((item) => (item.id === task.id ? (data as Task) : item)),
+          );
+        }
+      } catch (err) {
+        setTaskError(
+          err instanceof Error ? err.message : "Failed to update task.",
+        );
+      }
+    },
+    [getUserId, supabase],
+  );
   // =============================================
   // Transcript/Voice panel state
   // =============================================
@@ -435,10 +464,163 @@ export default function ConsoleClient({
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
+  // =============================================
+  // Gmail integration state (Arcade MCP)
+  // =============================================
+  
+  // Whether to show the bottom-right Gmail prompt
+  const [showGmailPrompt, setShowGmailPrompt] = useState(false);
+  // Whether Gmail is connected via Arcade
+  const [gmailConnected, setGmailConnected] = useState(false);
+  // Whether we're currently authorizing Gmail
+  const [isGmailAuthorizing, setIsGmailAuthorizing] = useState(false);
+  // Whether Arcade is configured on the backend
+  const [arcadeConfigured, setArcadeConfigured] = useState(false);
+
   // Transcript buffering and debouncing refs
   const transcriptBufferRef = useRef<
     Map<string, { text: string; timestamp: Date; timer: NodeJS.Timeout | null }>
   >(new Map());
+
+  // =============================================
+  // Gmail integration - check status on mount
+  // =============================================
+
+  /**
+   * Fetches Gmail integration status from /api/gmail/status.
+   * Optionally shows the prompt (when explicitly requested by the agent/UI).
+   */
+  const checkGmailStatus = useCallback(async (opts?: { allowPrompt?: boolean }) => {
+    try {
+      const response = await fetch("/api/gmail/status");
+      if (!response.ok) {
+        // If status can't be fetched (e.g. user is not authed), don't leave a stale prompt stuck on.
+        setArcadeConfigured(false);
+        setShowGmailPrompt(false);
+        return;
+      }
+
+      const data = await response.json();
+      
+      // Track whether Arcade is configured
+      setArcadeConfigured(data.arcade_configured === true);
+      
+      // Track connection status
+      const connected = data.connected === true;
+      setGmailConnected(connected);
+      
+      // Only show the prompt when explicitly requested (e.g. agent needs Gmail right now).
+      // This avoids the "always-on" bottom-right widget vibe.
+      const shouldShow =
+        opts?.allowPrompt === true &&
+        data.arcade_configured &&
+        !connected &&
+        !data.is_snoozed;
+      setShowGmailPrompt(shouldShow);
+    } catch (err) {
+      console.error("[Gmail] Error checking status:", err);
+      // Avoid sticky prompt if the status check throws.
+      setShowGmailPrompt(false);
+    }
+  }, []);
+
+  // Check Gmail status on mount
+  useEffect(() => {
+    checkGmailStatus();
+  }, [checkGmailStatus]);
+
+  /**
+   * Initiates Gmail authorization via Arcade.
+   * Opens the OAuth URL in a new tab and polls for completion.
+   */
+  const handleGmailConnect = useCallback(async () => {
+    setIsGmailAuthorizing(true);
+    
+    try {
+      const response = await fetch("/api/gmail/authorize", { method: "POST" });
+      if (!response.ok) {
+        // Get the actual error message from the response
+        let errorData: any;
+        try {
+          const text = await response.text();
+          errorData = text ? JSON.parse(text) : { error: "Empty response" };
+        } catch (e) {
+          errorData = { error: `Failed to parse response: ${await response.text()}` };
+        }
+        console.error("[Gmail] Authorization request failed:", {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData.error || errorData,
+          details: errorData.details,
+        });
+        setIsGmailAuthorizing(false);
+        return;
+      }
+
+      const data = await response.json();
+
+      // If already completed, just refresh status
+      if (data.status === "completed") {
+        setGmailConnected(true);
+        setShowGmailPrompt(false);
+        setIsGmailAuthorizing(false);
+        return;
+      }
+
+      // Open the authorization URL in a new tab
+      if (data.url) {
+        window.open(data.url, "_blank", "noopener,noreferrer");
+      }
+
+      // Poll for completion (up to 2 minutes, every 3 seconds)
+      const maxAttempts = 40;
+      let attempts = 0;
+      
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        
+        try {
+          const statusResponse = await fetch("/api/gmail/status");
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            
+            if (statusData.connected) {
+              // Success! User completed OAuth
+              clearInterval(pollInterval);
+              setGmailConnected(true);
+              setShowGmailPrompt(false);
+              setIsGmailAuthorizing(false);
+            }
+          }
+        } catch {
+          // Ignore poll errors
+        }
+        
+        // Stop polling after max attempts
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          setIsGmailAuthorizing(false);
+        }
+      }, 3000);
+    } catch (err) {
+      console.error("[Gmail] Error initiating authorization:", err);
+      setIsGmailAuthorizing(false);
+    }
+  }, []);
+
+  /**
+   * Snoozes the Gmail prompt for 14 days.
+   */
+  const handleGmailSnooze = useCallback(async () => {
+    try {
+      const response = await fetch("/api/gmail/snooze", { method: "POST" });
+      if (response.ok) {
+        setShowGmailPrompt(false);
+      }
+    } catch (err) {
+      console.error("[Gmail] Error snoozing:", err);
+    }
+  }, []);
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // =============================================
@@ -877,6 +1059,14 @@ export default function ConsoleClient({
 
             try {
               const data = JSON.parse(text);
+              // UI events sent by the voice agent (via LiveKit data messages).
+              // This lets the agent reliably "nudge" the user to connect Gmail by
+              // showing the bottom-right Gmail Integration prompt.
+              if (data?.type === "ui_event" && data?.event === "gmail_connect_required") {
+                // Reconcile against server truth; only show if Arcade is configured and not snoozed.
+                // If `/api/gmail/status` fails, we intentionally do NOT force a sticky prompt.
+                checkGmailStatus({ allowPrompt: true });
+              }
               if (data.text || data.transcript) {
                 addTranscript(
                   participant?.identity || "system",
@@ -1141,7 +1331,7 @@ export default function ConsoleClient({
             style={{ color: 'rgb(253, 247, 228)' }}
           >
             {/* Tetrahedron icon with glow effect */}
-            <div className={`w-12 h-12 relative group-hover:scale-110 transition-transform duration-300 ${isConnected ? 'tetra-glow-active' : 'tetra-glow'}`}>
+            <div className={`w-14 h-14 relative group-hover:scale-110 transition-transform duration-300 ${isConnected ? 'tetra-glow-active' : 'tetra-glow'}`}>
               <TetrahedronIcon isConnected={isConnected} />
             </div>
             <span className="font-mono text-xs uppercase tracking-[0.2em] opacity-90 group-hover:opacity-100 transition-opacity">
@@ -1226,11 +1416,15 @@ export default function ConsoleClient({
                     ADD TASK
                   </button>
                 </div>
-                <TasksList tasks={tasks} onEditTask={openEditTaskModal} />
+                <TasksList
+                  tasks={tasks}
+                  onEditTask={openEditTaskModal}
+                  onToggleDone={handleToggleTaskDone}
+                />
               </div>
 
               {/* System Feed Panel - kept under tasks as requested */}
-              <div className="glass-panel p-8 h-48 border-2 border-white">
+              <div className="glass-panel p-8 h-48 border-2 border-white order-last md:order-none">
                 <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white opacity-60 mb-6">
                   SYSTEM FEED
                 </h2>
@@ -1384,6 +1578,57 @@ export default function ConsoleClient({
           </div>
         </main>
 
+        {/* Gmail Connection Prompt - bottom-right toast */}
+        {showGmailPrompt && arcadeConfigured && (
+          <div className="fixed bottom-20 right-6 z-50 animate-fade-in">
+            <div className="glass-panel border-2 border-white p-4 max-w-xs">
+              {/* Header */}
+              <div className="flex items-center gap-2 mb-3">
+                <svg 
+                  className="w-5 h-5 text-white" 
+                  fill="none" 
+                  viewBox="0 0 24 24" 
+                  stroke="currentColor"
+                >
+                  <path 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    strokeWidth={2} 
+                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" 
+                  />
+                </svg>
+                <span className="font-mono text-xs uppercase tracking-wider text-white">
+                  Gmail Integration
+                </span>
+              </div>
+              
+              {/* Message */}
+              <p className="font-mono text-xs text-white/80 mb-4">
+                Connect Gmail to let Tetra summarize your emails.
+              </p>
+              
+              {/* Actions */}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGmailConnect}
+                  disabled={isGmailAuthorizing}
+                  className="flex-1 btn-neon-primary text-xs py-2 disabled:opacity-50 disabled:cursor-wait"
+                >
+                  {isGmailAuthorizing ? "Connecting..." : "Connect"}
+                </button>
+                <button
+                  onClick={handleGmailSnooze}
+                  disabled={isGmailAuthorizing}
+                  className="btn-neon-secondary text-xs py-2 px-3 disabled:opacity-50"
+                  title="Snooze for 14 days"
+                >
+                  Not now
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Footer - angular */}
         <footer className="px-6 py-4 md:px-12 border-t-2 border-white">
           <div className="flex items-center justify-between text-xs font-mono text-white">
@@ -1535,9 +1780,11 @@ function CurrentTimeIndicator() {
 function TasksList({
   tasks,
   onEditTask,
+  onToggleDone,
 }: {
   tasks: Task[];
   onEditTask: (task: Task) => void;
+  onToggleDone: (task: Task) => void;
 }) {
   if (tasks.length === 0) {
     return (
@@ -1569,6 +1816,19 @@ function TasksList({
                   ? "border-white bg-white/20"
                   : "border-white/60"
               }`}
+              role="button"
+              tabIndex={0}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleDone(task);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onToggleDone(task);
+                }
+              }}
             >
               {task.done && (
                 <svg

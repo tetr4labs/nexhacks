@@ -38,6 +38,10 @@ load_dotenv(".env.local")
 class TetraAgent(Agent):
     def __init__(self, room: rtc.Room):
         self.room = room
+        # These are hydrated in `on_enter`. In practice the agent can enter the room
+        # slightly before the user, so we also lazily hydrate them in tool calls.
+        self.user_id: Optional[str] = None
+        self.supabase: Optional[Client] = None
 
         super().__init__(
             instructions=f"""\
@@ -54,8 +58,12 @@ EMAIL (GMAIL) CAPABILITIES (READ-ONLY):
 - You MAY use Arcade Gmail tools to read/summarize emails if available.
 - IMPORTANT: This agent is a voice assistant. Prefer short, skimmable summaries.
 - NEVER send emails, create drafts, delete, label, or modify the user's mailbox.
-- If an email tool call returns an authorization URL, tell the user to open it to connect Gmail,
-  then retry the email request.
+- TOOL YOU MUST USE FOR GMAIL AUTH UI: `prompt_gmail_connect`
+  - Calling `prompt_gmail_connect` triggers the console UI to show the bottom-right
+    "Gmail Integration" connect box with the Arcade authorization link.
+  - If Gmail is not connected (or a Gmail tool requires authorization), you MUST call
+    `prompt_gmail_connect` (do NOT just talk about the console UI).
+  - After calling it, tell the user: "Click Connect in the bottom-right Gmail prompt, finish sign-in, and I’ll retry."
 - When summarizing emails, do NOT read long bodies aloud; summarize and offer to open details.
 - Use these read-only tools when needed:
   - Gmail.ListEmails (recent messages)
@@ -66,6 +74,26 @@ EMAIL ROUTING RULE (IMPORTANT):
 - If the user's request is about EMAIL (e.g. "inbox", "email", "Gmail", "message", "thread",
   "sender", "subject", "unread", "search my email"), then DO NOT call calendar/task database tools
   like `get_day_context`. Use Gmail tools instead.
+- CRITICAL: Before attempting ANY Gmail/email tool, ALWAYS call `get_gmail_integration_state` first.
+  If it returns "GMAIL_SNOOZED", do NOT use Gmail tools. Tell the user their Gmail is snoozed
+  and they can reconnect from the console UI.
+
+GMAIL TOOL-CALLING PLAYBOOK (STRICT):
+- If the user asks anything email-related and Gmail is not confirmed connected:
+  1) Call `get_gmail_integration_state`.
+  2) If the result contains "GMAIL_NOT_CONNECTED" or says the state is unknown/not initialized:
+     - Immediately call `prompt_gmail_connect(reason="<brief reason>")`.
+     - Do NOT attempt Gmail.* tools yet.
+     - Tell the user to click Connect in the bottom-right prompt, finish sign-in, then ask you to retry.
+  3) If the result contains "GMAIL_SNOOZED":
+     - Do NOT call Gmail.* tools.
+     - Tell the user Gmail is snoozed and they can reconnect from the console.
+  4) Only if the result says "connected" may you call Gmail.* tools.
+
+EXAMPLE (YOU MUST FOLLOW THIS PATTERN):
+- User: "Check my inbox"
+  - You: (call `get_gmail_integration_state`)
+  - If not connected: (call `prompt_gmail_connect`), then say: "Click Connect in the bottom-right Gmail prompt..."
 
 CORE DIRECTIVES:
 1. SEMANTIC TRANSLATION:
@@ -91,12 +119,42 @@ ERROR HANDLING:
         self.session = session
         logger.info("Agent joined room. Hydrating user session...")
 
-        # 2. Find the human user to get their token
+        # Hydrate Supabase/user context. IMPORTANT: the agent can join before the user;
+        # if the user isn't present yet, we kick off a background "late hydrate" task
+        # so DB-backed tools (including Gmail status) start working as soon as the user joins.
+        hydrated = await self._ensure_user_and_supabase(max_wait_seconds=10)
+        if not hydrated:
+            logger.warning(
+                "User not present yet (or missing metadata). Will hydrate DB context when user joins."
+            )
+            asyncio.create_task(self._ensure_user_and_supabase(max_wait_seconds=120))
+
+        # 4. Generate Greeting
+        await self.session.generate_reply(
+            instructions="Greet the user and offer your assistance.",
+            allow_interruptions=True,
+        )
+
+    async def _ensure_user_and_supabase(self, max_wait_seconds: int = 10) -> bool:
+        """
+        Ensure we have `self.user_id` and an authenticated `self.supabase` client.
+
+        Why this exists:
+        - In LiveKit, the agent can enter the room before the user.
+        - Our previous implementation returned early from `on_enter`, which meant DB-backed
+          tools would *permanently* fail for that session.
+        - This helper can be called from `on_enter` and from individual tools to recover.
+        """
+        if getattr(self, "supabase", None) and getattr(self, "user_id", None):
+            return True
+
+        if not getattr(self, "room", None):
+            return False
+
+        # Find the human user participant (non-agent) and extract their Supabase JWT from metadata.
         user = None
-        # In practice, the agent can enter the room slightly before the user.
-        # Wait briefly so we can reliably pick up the user's Supabase token metadata.
-        for _ in range(50):  # ~10s total
-            # Iterate over remote participants to find the human
+        attempts = max(1, int(max_wait_seconds / 0.2))
+        for _ in range(attempts):
             for p in self.room.remote_participants.values():
                 if p.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
                     user = p
@@ -106,56 +164,46 @@ ERROR HANDLING:
             await asyncio.sleep(0.2)
 
         if not user:
-            logger.warning("No user found in room yet. Waiting...")
-            # Ideally we would wait here, but for now we log warning.
-            # The agent will still work but tools will fail until user is found/re-checked.
-            return
+            return False
 
         self.user_id = user.identity
 
-        # 3. Parse Token
+        # Parse token from participant metadata. We set this in `/api/livekit-token` on the frontend.
         user_token = ""
         try:
             if user.metadata:
                 data = json.loads(user.metadata)
-                user_token = data.get("supabase_token")
+                user_token = data.get("supabase_token") or ""
         except Exception:
-            # Fallback if metadata is just the string
-            user_token = user.metadata
+            # Fallback if metadata is just the raw token string
+            user_token = user.metadata or ""
 
-        if user_token:
-            # Repo convention: frontend uses NEXT_PUBLIC_SUPABASE_*.
-            # Backend expects SUPABASE_* but we fall back for convenience.
-            url = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
-            key = os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        if not user_token:
+            logger.warning("No Supabase token found in LiveKit participant metadata yet.")
+            self.supabase = None
+            return False
 
-            if not url or not key:
-                logger.error(
-                    "Supabase env vars missing. Set SUPABASE_URL + SUPABASE_ANON_KEY in backend/.env.local "
-                    "(or provide NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY). "
-                    "Calendar/task DB tools will be unavailable."
-                )
-                self.supabase = None  # type: ignore[assignment]
-            else:
-                # Create the client scoped to this user
-                self.supabase = create_client(
-                    url,  # type: ignore
-                    key,  # type: ignore
-                    options=ClientOptions(
-                        headers={"Authorization": f"Bearer {user_token}"})
-                )
-                logger.info(
-                    f"Supabase client authenticated for user {self.user_id}")
-        else:
+        # Repo convention: frontend uses NEXT_PUBLIC_SUPABASE_*.
+        # Backend expects SUPABASE_* but we fall back for convenience.
+        url = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+        key = os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+
+        if not url or not key:
             logger.error(
-                "No Supabase token found in metadata. DB tools will fail.")
-            self.supabase = None  # type: ignore[assignment]
+                "Supabase env vars missing. Set SUPABASE_URL + SUPABASE_ANON_KEY in backend/.env.local "
+                "(or provide NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY)."
+            )
+            self.supabase = None
+            return False
 
-        # 4. Generate Greeting
-        await self.session.generate_reply(
-            instructions="Greet the user and offer your assistance.",
-            allow_interruptions=True,
+        # Create the client scoped to this user's JWT (RLS applies properly).
+        self.supabase = create_client(
+            url,  # type: ignore[arg-type]
+            key,  # type: ignore[arg-type]
+            options=ClientOptions(headers={"Authorization": f"Bearer {user_token}"}),
         )
+        logger.info(f"Supabase client authenticated for user {self.user_id}")
+        return True
 
     @function_tool()
     async def get_day_context(
@@ -392,6 +440,137 @@ ERROR HANDLING:
             return "Task marked as done. Good job."
         except Exception as e:
             return f"Error updating task: {str(e)}"
+
+    # --- GMAIL INTEGRATION STATE ---
+
+    @function_tool()
+    async def get_gmail_integration_state(self):
+        """
+        Check if the user has snoozed Gmail integration.
+        ALWAYS call this BEFORE attempting any Gmail/email tool.
+        If snoozed, do NOT attempt Gmail tools - tell the user their Gmail is snoozed.
+        """
+        logger.info("Checking Gmail integration state...")
+        # This tool depends on the `user_profiles` table; ensure Supabase is hydrated.
+        # This avoids the common "agent joined before user" race.
+        hydrated = await self._ensure_user_and_supabase(max_wait_seconds=3)
+        if not hydrated or not getattr(self, "supabase", None) or not getattr(self, "user_id", None):
+            return (
+                "Gmail integration state: unknown (not fully initialized yet). "
+                "If you want Gmail features, open the console UI and click **Connect Gmail** "
+                "when prompted."
+            )
+        try:
+            # Query user profile for gmail_snoozed_until
+            response = (
+                self.supabase.table("user_profiles")
+                .select("gmail_snoozed_until, gmail_connected")
+                .eq("id", self.user_id)
+                .single()
+                .execute()
+            )
+            
+            profile = response.data
+            if not profile:
+                return "Gmail integration state: unknown (no profile). You may attempt Gmail tools."
+            
+            snoozed_until = profile.get("gmail_snoozed_until")
+            is_connected = profile.get("gmail_connected", False)
+            
+            # Check if snooze is active
+            if snoozed_until:
+                try:
+                    snooze_dt = datetime.fromisoformat(snoozed_until.replace("Z", "+00:00"))
+                    if snooze_dt > datetime.now(snooze_dt.tzinfo):
+                        # User has snoozed Gmail integration
+                        return (
+                            "GMAIL_SNOOZED: The user has snoozed Gmail integration. "
+                            "Do NOT attempt Gmail tools. Tell them: 'You've snoozed Gmail integration. "
+                            "You can reconnect it anytime from the console.'"
+                        )
+                except Exception:
+                    # If timestamp parsing fails, don't block the user—treat as not snoozed.
+                    logger.warning("Failed to parse gmail_snoozed_until; treating as not snoozed.")
+            
+            # Return connected status
+            if is_connected:
+                return "Gmail integration: connected. You may use Gmail tools."
+            else:
+                return (
+                    "GMAIL_NOT_CONNECTED: Gmail isn't connected yet. "
+                    "Call `prompt_gmail_connect` so the user can click Connect in the console UI, "
+                    "then retry the Gmail request."
+                )
+                
+        except Exception as e:
+            logger.error(f"Error checking Gmail state: {e}")
+            return f"Could not check Gmail state: {str(e)}. You may attempt Gmail tools."
+
+    async def _publish_ui_event(self, event: str, payload: dict) -> bool:
+        """
+        Publish a small UI event to the LiveKit room so the frontend can react (e.g. show a toast).
+
+        Implementation note:
+        - The Next.js console listens to LiveKit `RoomEvent.DataReceived` and can parse JSON.
+        - We include a `text` field so the message also appears in the transcript UI as a fallback.
+        """
+        try:
+            if not getattr(self, "room", None) or not getattr(self.room, "local_participant", None):
+                logger.warning("Cannot publish UI event: agent is not attached to a LiveKit room yet.")
+                return False
+
+            message = {
+                "type": "ui_event",
+                "event": event,
+                **payload,
+            }
+
+            # Reliable data messages are appropriate for UI nudges (don't drop them).
+            #
+            # IMPORTANT:
+            # - LiveKit's Python `publish_data` is async; if we don't await it, the message is never sent.
+            # - The frontend decodes bytes -> string -> JSON, and LiveKit will UTF-8 encode strings for us.
+            await self.room.local_participant.publish_data(
+                json.dumps(message),
+                reliable=True,
+                topic="ui",
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to publish UI event {event}: {e}")
+            return False
+
+    @function_tool()
+    async def prompt_gmail_connect(
+        self,
+        reason: Annotated[Optional[str], "Optional reason why Gmail is needed (shown to the user)."] = None,
+    ):
+        """
+        Ask the console UI to show the bottom-right Gmail connect prompt.
+
+        Use this when Gmail tools require OAuth / the user hasn't connected Gmail yet.
+        """
+        # Keep the user-facing message short; the frontend has the actual Connect button + OAuth flow.
+        fallback_text = (
+            "Gmail isn’t connected yet. Please click **Connect** in the bottom-right Gmail prompt, "
+            "finish sign-in, then tell me to retry."
+        )
+
+        sent = await self._publish_ui_event(
+            "gmail_connect_required",
+            {
+                "reason": reason,
+                # Include `text` so existing transcript UI shows a helpful instruction even if the toast fails.
+                "text": fallback_text,
+            },
+        )
+
+        if sent:
+            return (
+                "Requested Gmail connection in the console UI. "
+                "Please click Connect in the bottom-right Gmail prompt to sign in."
+            )
+        return fallback_text
 
 
 server = AgentServer()

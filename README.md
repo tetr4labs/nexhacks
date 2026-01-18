@@ -11,6 +11,9 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 LIVEKIT_URL=your_livekit_url
 LIVEKIT_API_KEY=your_livekit_api_key
 LIVEKIT_API_SECRET=your_livekit_api_secret
+
+# Optional: For Gmail integration (required for /api/gmail/* routes)
+ARCADE_API_KEY=your_arcade_api_key
 ```
 
 ### LiveKit Agent Environment Variables
