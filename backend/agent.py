@@ -30,12 +30,8 @@ load_dotenv(".env.local")
 
 
 class TetraAgent(Agent):
-    def __init__(self, supabase_client: Client, user_id: str):
-        now = datetime.now()
-        time_context = now.strftime("%A, %B %d, %Y at %I:%M %p %Z")
-
-        self.supabase = supabase_client
-        self.user_id = user_id  # Store UUID for "owner" field in inserts
+    def __init__(self, room: rtc.Room):
+        self.room = room
 
         super().__init__(
             instructions=f"""\
@@ -43,8 +39,7 @@ SYSTEM IDENTITY:
 You are TETRA, a proactive personal productivity partner.
 Your goal is to bridge the gap between "I want to" and "I'm doing it."
 
-OPERATIONAL PARAMETERS:
-- SYSTEM TIME: {time_context}.
+OPERATIONAL PARAMETERS
 - TONE: Casual, American, and conversational.
 - TIME FORMAT: 12-hour clock (2 pm).
 - DATE FORMAT: Natural/Relative.
@@ -67,8 +62,54 @@ ERROR HANDLING:
 - If a tool fails, explain why briefly.""",
         )
 
-    async def on_enter(self, session: AgentSession):
-        await session.generate_reply(
+    async def on_enter(self):
+        logger.info("Agent joined room. Hydrating user session...")
+
+        # 2. Find the human user to get their token
+        user = None
+        # Iterate over remote participants to find the human
+        for p in self.room.remote_participants.values():
+            if p.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+                user = p
+                break
+
+        if not user:
+            logger.warning("No user found in room yet. Waiting...")
+            # Ideally we would wait here, but for now we log warning.
+            # The agent will still work but tools will fail until user is found/re-checked.
+            return
+
+        self.user_id = user.identity
+
+        # 3. Parse Token
+        user_token = ""
+        try:
+            if user.metadata:
+                data = json.loads(user.metadata)
+                user_token = data.get("supabase_token")
+        except Exception:
+            # Fallback if metadata is just the string
+            user_token = user.metadata
+
+        if user_token:
+            url = os.environ.get("SUPABASE_URL")
+            key = os.environ.get("SUPABASE_ANON_KEY")
+
+            # Create the client scoped to this user
+            self.supabase = create_client(
+                url,  # type: ignore
+                key,  # type: ignore
+                options=ClientOptions(
+                    headers={"Authorization": f"Bearer {user_token}"})
+            )
+            logger.info(
+                f"Supabase client authenticated for user {self.user_id}")
+        else:
+            logger.error(
+                "No Supabase token found in metadata. DB tools will fail.")
+
+        # 4. Generate Greeting
+        await self.session.generate_reply(
             instructions="Greet the user and offer your assistance.",
             allow_interruptions=True,
         )
@@ -317,51 +358,14 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name="Tetra")
 async def entrypoint(ctx: JobContext):
-    await ctx.connect()
-
-    logger.info("Waiting for participant...")
-    participant = await ctx.wait_for_participant()
-
-    # 1. Get Token for Supabase Client
-    user_token = ""
-    try:
-        user_token = participant.metadata.get("supabase_token")
-    except:
-        pass
-
-    if not user_token:
-        try:
-            meta_dict = json.loads(participant.metadata)
-            user_token = meta_dict.get("supabase_token")
-        except:
-            pass
-
-    if not user_token:
-        logger.error("No Supabase token found. DB access will fail.")
-
-    # 2. Get User ID (Identity) for "owner" field in RLS
-    # In your Token generator: identity: user.id
-    user_id = participant.identity
-
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_ANON_KEY")
-
-    client_options = ClientOptions(
-        headers={"Authorization": f"Bearer {user_token}"}
-    )
-
-    authenticated_client = create_client(
-        url, key, options=client_options)
-
-    # Pass both client AND user_id to the agent
-    agent = TetraAgent(supabase_client=authenticated_client, user_id=user_id)
+    agent = TetraAgent(ctx.room)
 
     session = AgentSession(
         stt=inference.STT(
             model="assemblyai/universal-streaming", language="en"),
-        llm=inference.LLM(model="openai/gpt-4.1"),
+        llm=inference.LLM(model="openai/gpt-4o"),
         tts=inference.TTS(
-            model="elevenlabs/eleven_flash_v2_5",
+            model="elevenlabs/eleven_turbo_v2_5",
             voice="CwhRBWXzGAHq8TQ4Fs17",
             language="en-US"
         ),
