@@ -19,6 +19,9 @@ export const metadata: Metadata = {
   title: "Tetra",
   description: "A cyberpunk voice assistant that turns spoken intentions into a structured day plan and keeps you accountable.",
   keywords: ["voice assistant", "productivity", "scheduling", "accountability", "AI"],
+  icons: {
+    icon: "/tetra.png",
+  },
 };
 
 export default function RootLayout({
