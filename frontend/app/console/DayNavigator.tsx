@@ -70,27 +70,32 @@ export default function DayNavigator({ currentDay }: { currentDay: string }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [currentDate, goToDay]);
 
-  const label = currentDate.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
+  const weekdayShort = currentDate.toLocaleDateString("en-US", {
+    weekday: "short",
+  });
+  const monthDay = currentDate.toLocaleDateString("en-US", {
+    month: "short",
     day: "numeric",
   });
 
   return (
-    <div className="flex items-center gap-3 border-2 border-white px-3 py-1">
+    <div className="flex items-center gap-2 border-2 border-white/80 bg-black/50 px-2 py-1.5 text-[10px] sm:text-xs font-mono uppercase tracking-[0.2em] text-white">
       <button
         type="button"
         onClick={() => goToDay(addDays(currentDate, -1))}
-        className="text-white hover:bg-white/10 transition-colors font-mono px-2 py-1 uppercase tracking-wider text-xs"
+        className="flex h-6 w-6 items-center justify-center border border-white/40 hover:border-white hover:bg-white/10 transition-colors"
         aria-label="Previous day"
       >
         ←
       </button>
-      <span className="text-xs font-mono text-white uppercase tracking-wider">{label.toUpperCase()}</span>
+      <span className="flex flex-col items-center leading-tight">
+        <span className="hidden sm:inline text-white/70">{weekdayShort.toUpperCase()}</span>
+        <span className="text-white">{monthDay.toUpperCase()}</span>
+      </span>
       <button
         type="button"
         onClick={() => goToDay(addDays(currentDate, 1))}
-        className="text-white hover:bg-white/10 transition-colors font-mono px-2 py-1 uppercase tracking-wider text-xs"
+        className="flex h-6 w-6 items-center justify-center border border-white/40 hover:border-white hover:bg-white/10 transition-colors"
         aria-label="Next day"
       >
         →

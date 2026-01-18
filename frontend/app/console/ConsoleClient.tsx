@@ -75,21 +75,45 @@ export default function ConsoleClient({
 }: ConsoleClientProps) {
   const supabase = useMemo(() => createClient(), []);
 
+  // State for tasks and events - will be updated via Realtime subscriptions
   const [tasks, setTasks] = useState<Task[]>(dayTasks);
+  const [localEvents, setLocalEvents] = useState<Event[]>(events || []);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [taskModalMode, setTaskModalMode] = useState<"create" | "edit">("create");
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [isTaskSaving, setIsTaskSaving] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
 
+  // Helper to check if a task belongs to the selected day
+  const isTaskInSelectedDay = useCallback((task: Task) => {
+    if (!task.due) return true; // Include tasks with no due date
+    const dueDate = new Date(task.due);
+    const endOfDay = new Date(selectedDay);
+    endOfDay.setHours(23, 59, 59, 999);
+    return dueDate <= endOfDay;
+  }, [selectedDay]);
+
+  // Helper to check if an event belongs to the selected day
+  const isEventInSelectedDay = useCallback((event: Event) => {
+    if (!event.start) return false;
+    const startOfDay = new Date(selectedDay);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(selectedDay);
+    endOfDay.setHours(23, 59, 59, 999);
+    const eventStart = new Date(event.start);
+    return eventStart >= startOfDay && eventStart < endOfDay;
+  }, [selectedDay]);
+
+  // Update state when props change (e.g., day navigation)
   useEffect(() => {
     setTasks(dayTasks);
+    setLocalEvents(events || []);
     setIsTaskModalOpen(false);
     setActiveTask(null);
     setTaskError(null);
     setIsTaskSaving(false);
     setTaskModalMode("create");
-  }, [dayTasks, selectedDayString]);
+  }, [dayTasks, events, selectedDayString]);
 
   const getUserId = useCallback(async () => {
     const { data, error } = await supabase.auth.getUser();
@@ -98,6 +122,183 @@ export default function ConsoleClient({
     }
     return data.user.id;
   }, [supabase]);
+
+  // Task sorting function - defined early so it can be used in subscriptions
+  const sortTasks = useCallback((list: Task[]) => {
+    return [...list].sort((a, b) => {
+      if (!a.due && !b.due) return a.id - b.id;
+      if (!a.due) return 1;
+      if (!b.due) return -1;
+      const aTime = new Date(a.due).getTime();
+      const bTime = new Date(b.due).getTime();
+      if (aTime === bTime) return a.id - b.id;
+      return aTime - bTime;
+    });
+  }, []);
+
+  // =============================================
+  // Supabase Realtime Subscriptions
+  // Listen for changes to tasks and events in real-time
+  // =============================================
+  useEffect(() => {
+    let tasksChannel: ReturnType<typeof supabase.channel> | null = null;
+    let eventsChannel: ReturnType<typeof supabase.channel> | null = null;
+    let userId: string | null = null;
+
+    const setupSubscriptions = async () => {
+      try {
+        // Get current user ID
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData.user) {
+          console.error("Failed to get user for Realtime subscriptions:", userError);
+          return;
+        }
+        userId = userData.user.id;
+
+        // Subscribe to tasks table changes
+        tasksChannel = supabase
+          .channel("tasks-changes")
+          .on(
+            "postgres_changes",
+            {
+              event: "*", // Listen for INSERT, UPDATE, DELETE
+              schema: "public",
+              table: "tasks",
+              filter: `owner=eq.${userId}`, // Only listen to this user's tasks
+            },
+            (payload) => {
+              console.log("Task change received:", payload.eventType, payload);
+              
+              if (payload.eventType === "INSERT") {
+                const newTask = payload.new as Task;
+                // Only add if it belongs to the selected day
+                if (isTaskInSelectedDay(newTask)) {
+                  setTasks((prev) => {
+                    // Check if task already exists (avoid duplicates)
+                    if (prev.some((t) => t.id === newTask.id)) {
+                      return prev;
+                    }
+                    return sortTasks([...prev, newTask]);
+                  });
+                }
+              } else if (payload.eventType === "UPDATE") {
+                const updatedTask = payload.new as Task;
+                setTasks((prev) => {
+                  const existingIndex = prev.findIndex((t) => t.id === updatedTask.id);
+                  if (existingIndex >= 0) {
+                    // Task exists - update it if it's still in the selected day, otherwise remove it
+                    if (isTaskInSelectedDay(updatedTask)) {
+                      const updated = [...prev];
+                      updated[existingIndex] = updatedTask;
+                      return sortTasks(updated);
+                    } else {
+                      // Task moved out of selected day - remove it
+                      return prev.filter((t) => t.id !== updatedTask.id);
+                    }
+                  } else {
+                    // Task doesn't exist in current list - add it if it belongs to selected day
+                    if (isTaskInSelectedDay(updatedTask)) {
+                      return sortTasks([...prev, updatedTask]);
+                    }
+                    return prev;
+                  }
+                });
+              } else if (payload.eventType === "DELETE") {
+                const deletedTask = payload.old as Task;
+                setTasks((prev) => prev.filter((t) => t.id !== deletedTask.id));
+              }
+            }
+          )
+          .subscribe((status) => {
+            console.log("Tasks subscription status:", status);
+          });
+
+        // Subscribe to events table changes
+        eventsChannel = supabase
+          .channel("events-changes")
+          .on(
+            "postgres_changes",
+            {
+              event: "*", // Listen for INSERT, UPDATE, DELETE
+              schema: "public",
+              table: "events",
+              filter: `owner=eq.${userId}`, // Only listen to this user's events
+            },
+            (payload) => {
+              console.log("Event change received:", payload.eventType, payload);
+              
+              if (payload.eventType === "INSERT") {
+                const newEvent = payload.new as Event;
+                // Only add if it belongs to the selected day
+                if (isEventInSelectedDay(newEvent)) {
+                  setLocalEvents((prev) => {
+                    // Check if event already exists (avoid duplicates)
+                    if (prev.some((e) => e.id === newEvent.id)) {
+                      return prev;
+                    }
+                    // Sort by start time
+                    return [...prev, newEvent].sort((a, b) => {
+                      if (!a.start || !b.start) return 0;
+                      return new Date(a.start).getTime() - new Date(b.start).getTime();
+                    });
+                  });
+                }
+              } else if (payload.eventType === "UPDATE") {
+                const updatedEvent = payload.new as Event;
+                setLocalEvents((prev) => {
+                  const existingIndex = prev.findIndex((e) => e.id === updatedEvent.id);
+                  if (existingIndex >= 0) {
+                    // Event exists - update it if it's still in the selected day, otherwise remove it
+                    if (isEventInSelectedDay(updatedEvent)) {
+                      const updated = [...prev];
+                      updated[existingIndex] = updatedEvent;
+                      // Re-sort by start time
+                      return updated.sort((a, b) => {
+                        if (!a.start || !b.start) return 0;
+                        return new Date(a.start).getTime() - new Date(b.start).getTime();
+                      });
+                    } else {
+                      // Event moved out of selected day - remove it
+                      return prev.filter((e) => e.id !== updatedEvent.id);
+                    }
+                  } else {
+                    // Event doesn't exist in current list - add it if it belongs to selected day
+                    if (isEventInSelectedDay(updatedEvent)) {
+                      const updated = [...prev, updatedEvent];
+                      return updated.sort((a, b) => {
+                        if (!a.start || !b.start) return 0;
+                        return new Date(a.start).getTime() - new Date(b.start).getTime();
+                      });
+                    }
+                    return prev;
+                  }
+                });
+              } else if (payload.eventType === "DELETE") {
+                const deletedEvent = payload.old as Event;
+                setLocalEvents((prev) => prev.filter((e) => e.id !== deletedEvent.id));
+              }
+            }
+          )
+          .subscribe((status) => {
+            console.log("Events subscription status:", status);
+          });
+      } catch (error) {
+        console.error("Error setting up Realtime subscriptions:", error);
+      }
+    };
+
+    setupSubscriptions();
+
+    // Cleanup function - unsubscribe when component unmounts or dependencies change
+    return () => {
+      if (tasksChannel) {
+        supabase.removeChannel(tasksChannel);
+      }
+      if (eventsChannel) {
+        supabase.removeChannel(eventsChannel);
+      }
+    };
+  }, [supabase, selectedDayString, isTaskInSelectedDay, isEventInSelectedDay, sortTasks]);
 
   const openCreateTaskModal = useCallback(() => {
     setTaskError(null);
@@ -119,18 +320,6 @@ export default function ConsoleClient({
     setActiveTask(null);
     setTaskError(null);
   }, [isTaskSaving]);
-
-  const sortTasks = useCallback((list: Task[]) => {
-    return [...list].sort((a, b) => {
-      if (!a.due && !b.due) return a.id - b.id;
-      if (!a.due) return 1;
-      if (!b.due) return -1;
-      const aTime = new Date(a.due).getTime();
-      const bTime = new Date(b.due).getTime();
-      if (aTime === bTime) return a.id - b.id;
-      return aTime - bTime;
-    });
-  }, []);
 
   const handleSaveTask = useCallback(
     async (payload: { name: string; description: string; due: string | null }) => {
@@ -940,7 +1129,7 @@ export default function ConsoleClient({
             </span>
             <span className="opacity-50">|</span>
             <span className="opacity-80">
-              {events?.length || 0} EVENTS • {tasks.length} TASKS
+              {localEvents?.length || 0} EVENTS • {tasks.length} TASKS
             </span>
           </div>
         </div>
@@ -974,7 +1163,7 @@ export default function ConsoleClient({
 
               {/* Timeline view */}
               <div className="flex-1 min-h-0">
-                <Timeline events={events || []} showCurrentTime={isToday} />
+                <Timeline events={localEvents || []} showCurrentTime={isToday} />
               </div>
             </div>
 
