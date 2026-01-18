@@ -104,6 +104,12 @@ export default function ConsoleClient({
     return eventStart >= startOfDay && eventStart < endOfDay;
   }, [selectedDay]);
 
+  // Ref to track selected day for LiveKit handlers (which are closed over)
+  const selectedDayRef = useRef(selectedDay);
+  useEffect(() => {
+    selectedDayRef.current = selectedDay;
+  }, [selectedDay]);
+
   // Update state when props change (e.g., day navigation)
   useEffect(() => {
     setTasks(dayTasks);
@@ -164,11 +170,10 @@ export default function ConsoleClient({
               event: "*", // Listen for INSERT, UPDATE, DELETE
               schema: "public",
               table: "tasks",
-              filter: `owner=eq.${userId}`, // Only listen to this user's tasks
             },
             (payload) => {
               console.log("Task change received:", payload.eventType, payload);
-              
+
               if (payload.eventType === "INSERT") {
                 const newTask = payload.new as Task;
                 // Only add if it belongs to the selected day
@@ -184,7 +189,7 @@ export default function ConsoleClient({
               } else if (payload.eventType === "UPDATE") {
                 const updatedTask = payload.new as Task;
                 setTasks((prev) => {
-                  const existingIndex = prev.findIndex((t) => t.id === updatedTask.id);
+                  const existingIndex = prev.findIndex((t) => String(t.id) === String(updatedTask.id));
                   if (existingIndex >= 0) {
                     // Task exists - update it if it's still in the selected day, otherwise remove it
                     if (isTaskInSelectedDay(updatedTask)) {
@@ -193,7 +198,7 @@ export default function ConsoleClient({
                       return sortTasks(updated);
                     } else {
                       // Task moved out of selected day - remove it
-                      return prev.filter((t) => t.id !== updatedTask.id);
+                      return prev.filter((t) => String(t.id) !== String(updatedTask.id));
                     }
                   } else {
                     // Task doesn't exist in current list - add it if it belongs to selected day
@@ -204,8 +209,9 @@ export default function ConsoleClient({
                   }
                 });
               } else if (payload.eventType === "DELETE") {
-                const deletedTask = payload.old as Task;
-                setTasks((prev) => prev.filter((t) => t.id !== deletedTask.id));
+                const deletedTask = payload.old as Partial<Task>;
+                console.log("Delete task payload:", deletedTask);
+                setTasks((prev) => prev.filter((t) => String(t.id) !== String(deletedTask.id)));
               }
             }
           )
@@ -222,11 +228,10 @@ export default function ConsoleClient({
               event: "*", // Listen for INSERT, UPDATE, DELETE
               schema: "public",
               table: "events",
-              filter: `owner=eq.${userId}`, // Only listen to this user's events
             },
             (payload) => {
               console.log("Event change received:", payload.eventType, payload);
-              
+
               if (payload.eventType === "INSERT") {
                 const newEvent = payload.new as Event;
                 // Only add if it belongs to the selected day
@@ -246,7 +251,7 @@ export default function ConsoleClient({
               } else if (payload.eventType === "UPDATE") {
                 const updatedEvent = payload.new as Event;
                 setLocalEvents((prev) => {
-                  const existingIndex = prev.findIndex((e) => e.id === updatedEvent.id);
+                  const existingIndex = prev.findIndex((e) => String(e.id) === String(updatedEvent.id));
                   if (existingIndex >= 0) {
                     // Event exists - update it if it's still in the selected day, otherwise remove it
                     if (isEventInSelectedDay(updatedEvent)) {
@@ -259,7 +264,7 @@ export default function ConsoleClient({
                       });
                     } else {
                       // Event moved out of selected day - remove it
-                      return prev.filter((e) => e.id !== updatedEvent.id);
+                      return prev.filter((e) => String(e.id) !== String(updatedEvent.id));
                     }
                   } else {
                     // Event doesn't exist in current list - add it if it belongs to selected day
@@ -274,8 +279,9 @@ export default function ConsoleClient({
                   }
                 });
               } else if (payload.eventType === "DELETE") {
-                const deletedEvent = payload.old as Event;
-                setLocalEvents((prev) => prev.filter((e) => e.id !== deletedEvent.id));
+                const deletedEvent = payload.old as Partial<Event>;
+                console.log("Delete event payload:", deletedEvent);
+                setLocalEvents((prev) => prev.filter((e) => String(e.id) !== String(deletedEvent.id)));
               }
             }
           )
@@ -325,7 +331,7 @@ export default function ConsoleClient({
         }
       }
     };
-    
+
     syncTimezone();
   }, [profileTimezone, supabase]);
 
@@ -435,23 +441,23 @@ export default function ConsoleClient({
   // =============================================
   // Transcript/Voice panel state
   // =============================================
-  
+
   // Controls whether the transcript column is visible (collapsed by default)
   const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
 
   // Session start time - initialized client-side to avoid hydration mismatch
   // (server renders one timestamp, client hydrates with another causing errors)
   const [sessionTime, setSessionTime] = useState<string>("--:--:--");
-  
+
   // Set the session time after hydration to avoid mismatch
   useEffect(() => {
     setSessionTime(formatTime(new Date()));
   }, []);
-  
+
   // =============================================
   // LiveKit connection state (ported from /talk)
   // =============================================
-  
+
   const [room, setRoom] = useState<Room | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -862,7 +868,101 @@ export default function ConsoleClient({
 
             try {
               const data = JSON.parse(text);
-              if (data.text || data.transcript) {
+
+              // Handle Agent State Updates (Event/Task CUD)
+              if (data.type === "event_update" || data.type === "task_update") {
+                const action = data.action; // INSERT, UPDATE, DELETE
+                const entity = data.data;   // The record or {id}
+                const currentDay = selectedDayRef.current;
+
+                // Helper checks using ref (to avoid stale closures)
+                const isInDayTask = (t: Task) => {
+                  if (!t.due) return true;
+                  const d = new Date(t.due);
+                  const end = new Date(currentDay);
+                  end.setHours(23, 59, 59, 999);
+                  return d <= end;
+                };
+
+                const isInDayEvent = (e: Event) => {
+                  if (!e.start) return false;
+                  const s = new Date(e.start);
+                  const start = new Date(currentDay);
+                  start.setHours(0, 0, 0, 0);
+                  const end = new Date(currentDay);
+                  end.setHours(23, 59, 59, 999);
+                  return s >= start && s < end;
+                };
+
+                if (data.type === "task_update") {
+                  if (action === "INSERT") {
+                    if (isInDayTask(entity)) {
+                      setTasks(prev => {
+                        if (prev.some(t => String(t.id) === String(entity.id))) return prev;
+                        return sortTasks([...prev, entity]);
+                      });
+                    }
+                  } else if (action === "UPDATE") {
+                    setTasks(prev => {
+                      const idx = prev.findIndex(t => String(t.id) === String(entity.id));
+                      if (idx >= 0) {
+                        if (isInDayTask(entity)) {
+                          const newArr = [...prev];
+                          newArr[idx] = entity;
+                          return sortTasks(newArr);
+                        } else {
+                          return prev.filter(t => String(t.id) !== String(entity.id));
+                        }
+                      } else {
+                        if (isInDayTask(entity)) {
+                          return sortTasks([...prev, entity]);
+                        }
+                        return prev;
+                      }
+                    });
+                  } else if (action === "DELETE") {
+                    setTasks(prev => prev.filter(t => String(t.id) !== String(entity.id)));
+                  }
+                } else if (data.type === "event_update") {
+                  if (action === "INSERT") {
+                    if (isInDayEvent(entity)) {
+                      setLocalEvents(prev => {
+                        if (prev.some(e => String(e.id) === String(entity.id))) return prev;
+                        return [...prev, entity].sort((a, b) =>
+                          (a.start && b.start) ? new Date(a.start).getTime() - new Date(b.start).getTime() : 0
+                        );
+                      });
+                    }
+                  } else if (action === "UPDATE") {
+                    setLocalEvents(prev => {
+                      const idx = prev.findIndex(e => String(e.id) === String(entity.id));
+                      if (idx >= 0) {
+                        if (isInDayEvent(entity)) {
+                          const newArr = [...prev];
+                          newArr[idx] = entity;
+                          return newArr.sort((a, b) =>
+                            (a.start && b.start) ? new Date(a.start).getTime() - new Date(b.start).getTime() : 0
+                          );
+                        } else {
+                          return prev.filter(e => String(e.id) !== String(entity.id));
+                        }
+                      } else {
+                        if (isInDayEvent(entity)) {
+                          const newArr = [...prev, entity];
+                          return newArr.sort((a, b) =>
+                            (a.start && b.start) ? new Date(a.start).getTime() - new Date(b.start).getTime() : 0
+                          );
+                        }
+                        return prev;
+                      }
+                    });
+                  } else if (action === "DELETE") {
+                    setLocalEvents(prev => prev.filter(e => String(e.id) !== String(entity.id)));
+                  }
+                }
+              }
+              // Handle Transcripts
+              else if (data.text || data.transcript) {
                 addTranscript(
                   participant?.identity || "system",
                   data.text || data.transcript,
@@ -1171,12 +1271,11 @@ export default function ConsoleClient({
             - When transcript is open: 2fr 2fr 1fr (calendar + tasks + transcript)
             - Mobile: stacks vertically
           */}
-          <div 
-            className={`grid gap-8 h-full min-h-0 max-w-[1800px] mx-auto ${
-              isTranscriptOpen 
-                ? 'grid-cols-1 lg:grid-cols-[2fr_2fr_1fr]' 
-                : 'grid-cols-1 lg:grid-cols-2'
-            }`}
+          <div
+            className={`grid gap-8 h-full min-h-0 max-w-[1800px] mx-auto ${isTranscriptOpen
+              ? 'grid-cols-1 lg:grid-cols-[2fr_2fr_1fr]'
+              : 'grid-cols-1 lg:grid-cols-2'
+              }`}
           >
             {/* Timeline Panel (Calendar) */}
             <div className="glass-panel p-8 flex flex-col border-2 border-white min-h-0">
@@ -1253,13 +1352,12 @@ export default function ConsoleClient({
                   <div className="flex items-center gap-2">
                     {/* Connection status indicator */}
                     <span
-                      className={`font-mono text-xs px-2 py-1 border ${
-                        isConnected
-                          ? "border-green-500 text-green-400 bg-green-500/10"
-                          : isConnecting
-                            ? "border-yellow-500 text-yellow-400 bg-yellow-500/10"
-                            : "border-zinc-700 text-zinc-500"
-                      }`}
+                      className={`font-mono text-xs px-2 py-1 border ${isConnected
+                        ? "border-green-500 text-green-400 bg-green-500/10"
+                        : isConnecting
+                          ? "border-yellow-500 text-yellow-400 bg-yellow-500/10"
+                          : "border-zinc-700 text-zinc-500"
+                        }`}
                     >
                       {isConnected
                         ? "LIVE"
@@ -1331,8 +1429,8 @@ export default function ConsoleClient({
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
                   {transcript.length === 0 ? (
                     <p className="text-zinc-600 font-mono text-xs italic">
-                      {isConnected 
-                        ? "Waiting for conversation..." 
+                      {isConnected
+                        ? "Waiting for conversation..."
                         : "Click Connect to start"}
                     </p>
                   ) : (
@@ -1344,11 +1442,10 @@ export default function ConsoleClient({
                         >
                           <div className="flex items-center gap-2 mb-1">
                             <span
-                              className={`font-mono text-xs uppercase ${
-                                entry.speaker === "Tetra"
-                                  ? "text-cyan-400"
-                                  : "text-fuchsia-400"
-                              }`}
+                              className={`font-mono text-xs uppercase ${entry.speaker === "Tetra"
+                                ? "text-cyan-400"
+                                : "text-fuchsia-400"
+                                }`}
                             >
                               {entry.speaker}:
                             </span>
@@ -1540,20 +1637,18 @@ function TasksList({
       {tasks.map((task) => (
         <div
           key={task.id}
-          className={`group p-4 border-2 transition-colors cursor-pointer ${
-            task.done
-              ? "border-white/20 bg-black/40 opacity-60"
-              : "border-white/40 bg-black/20 hover:bg-white/5"
-          }`}
+          className={`group p-4 border-2 transition-colors cursor-pointer ${task.done
+            ? "border-white/20 bg-black/40 opacity-60"
+            : "border-white/40 bg-black/20 hover:bg-white/5"
+            }`}
           onClick={() => onEditTask(task)}
         >
           <div className="flex items-start gap-3">
             <div
-              className={`w-4 h-4 border-2 mt-0.5 flex-shrink-0 flex items-center justify-center ${
-                task.done
-                  ? "border-white bg-white/20"
-                  : "border-white/60"
-              }`}
+              className={`w-4 h-4 border-2 mt-0.5 flex-shrink-0 flex items-center justify-center ${task.done
+                ? "border-white bg-white/20"
+                : "border-white/60"
+                }`}
             >
               {task.done && (
                 <svg
@@ -1574,9 +1669,8 @@ function TasksList({
 
             <div className="min-w-0 flex-1">
               <p
-                className={`font-mono text-sm uppercase tracking-wider ${
-                  task.done ? "text-white/50 line-through" : "text-white"
-                }`}
+                className={`font-mono text-sm uppercase tracking-wider ${task.done ? "text-white/50 line-through" : "text-white"
+                  }`}
               >
                 {task.name || "UNTITLED TASK"}
               </p>

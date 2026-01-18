@@ -221,6 +221,22 @@ ERROR HANDLING:
             logger.error(f"Error getting day context: {e}", exc_info=True)
             return f"System Alert: Database connection failed. Details: {str(e)}"
 
+    async def _broadcast_change(self, entity: str, action: str, data: dict):
+        """Broadcast a change to the room using LiveKit data messages."""
+        try:
+            payload = json.dumps({
+                "type": f"{entity}_update",
+                "action": action,
+                "data": data
+            })
+            await self.room.local_participant.publish_data(
+                payload.encode("utf-8"),
+                reliable=True
+            )
+            logger.info(f"Broadcasted {entity} {action}: {data}")
+        except Exception as e:
+            logger.error(f"Error broadcasting change: {e}")
+
     # --- EVENT TOOLS ---
 
     @function_tool()
@@ -251,7 +267,11 @@ ERROR HANDLING:
                 "owner": self.user_id  # Explicitly set owner to satisfy RLS
             }
 
-            self.supabase.table("events").insert(data).execute()
+            response = self.supabase.table("events").insert(data).select().execute()
+            
+            # Broadcast the change if successful
+            if response.data:
+                await self._broadcast_change("event", "INSERT", response.data[0])
             
             # Return confirmation in user's local time
             start_local = start_dt_utc.astimezone(self.user_timezone)
@@ -310,8 +330,13 @@ ERROR HANDLING:
                 updates["start"] = new_start
                 updates["end"] = end_dt.isoformat()
 
-            self.supabase.table("events").update(
-                updates).eq("id", event_id).execute()
+            response = self.supabase.table("events").update(
+                updates).eq("id", event_id).select().execute()
+            
+            # Broadcast the change
+            if response.data:
+                await self._broadcast_change("event", "UPDATE", response.data[0])
+
             return f"Event {event_id} updated successfully."
         except Exception as e:
             logger.error(f"Error updating event: {e}", exc_info=True)
@@ -326,6 +351,8 @@ ERROR HANDLING:
         logger.info(f"Deleting event {event_id}")
         try:
             self.supabase.table("events").delete().eq("id", event_id).execute()
+            # Broadcast just the ID for deletion
+            await self._broadcast_change("event", "DELETE", {"id": event_id})
             return "Event deleted."
         except Exception as e:
             logger.error(f"Error deleting event: {e}", exc_info=True)
@@ -347,7 +374,12 @@ ERROR HANDLING:
                 "due": due_iso,
                 "owner": self.user_id  # Explicitly set owner
             }
-            self.supabase.table("tasks").insert(data).execute()
+            response = self.supabase.table("tasks").insert(data).select().execute()
+            
+            # Broadcast change
+            if response.data:
+                await self._broadcast_change("task", "INSERT", response.data[0])
+
             return f"Commitment logged: {name}"
         except Exception as e:
             logger.error(f"Error creating task: {e}", exc_info=True)
@@ -368,8 +400,13 @@ ERROR HANDLING:
             if due_iso:
                 updates["due"] = due_iso
 
-            self.supabase.table("tasks").update(
-                updates).eq("id", task_id).execute()
+            response = self.supabase.table("tasks").update(
+                updates).eq("id", task_id).select().execute()
+
+            # Broadcast change
+            if response.data:
+                await self._broadcast_change("task", "UPDATE", response.data[0])
+
             return "Task updated."
         except Exception as e:
             logger.error(f"Error updating task: {e}", exc_info=True)
@@ -383,6 +420,8 @@ ERROR HANDLING:
         """Permanently delete a task."""
         try:
             self.supabase.table("tasks").delete().eq("id", task_id).execute()
+            # Broadcast ID for deletion
+            await self._broadcast_change("task", "DELETE", {"id": task_id})
             return "Task deleted."
         except Exception as e:
             logger.error(f"Error deleting task: {e}", exc_info=True)
@@ -395,8 +434,13 @@ ERROR HANDLING:
     ):
         """Mark a task as complete."""
         try:
-            self.supabase.table("tasks").update(
-                {"done": True}).eq("id", task_id).execute()
+            response = self.supabase.table("tasks").update(
+                {"done": True}).eq("id", task_id).select().execute()
+            
+            # Broadcast change
+            if response.data:
+                await self._broadcast_change("task", "UPDATE", response.data[0])
+
             return "Task marked as done. Good job."
         except Exception as e:
             logger.error(f"Error marking task done: {e}", exc_info=True)

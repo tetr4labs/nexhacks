@@ -25,9 +25,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Get session for access token
-    // const {
-    //   data: { session },
-    // } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
     // Get LiveKit credentials from environment
     const livekitUrl = process.env.LIVEKIT_URL;
@@ -53,9 +53,9 @@ export async function GET(request: NextRequest) {
     const token = new AccessToken(apiKey, apiSecret, {
       identity: user.id,
       name: participantName,
-      // metadata: JSON.stringify({
-      //   supabase_token: session?.access_token || "",
-      // }),
+      metadata: JSON.stringify({
+        supabase_token: session?.access_token || "",
+      }),
     });
 
     // Explicitly set identity to ensure it's in the JWT
