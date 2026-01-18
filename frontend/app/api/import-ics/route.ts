@@ -12,15 +12,14 @@ import ICAL from 'ical.js';
  */
 export async function POST(request: NextRequest) {
   try {
-    // Authenticate the user
+    // Get authenticated user (auth check handled by middleware)
     const supabase = await createClient();
     const {
       data: { user },
-      error: authError,
     } = await supabase.auth.getUser();
 
-    // Return 401 if not authenticated
-    if (authError || !user) {
+    // Safety check (should never happen due to middleware, but TypeScript needs it)
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }

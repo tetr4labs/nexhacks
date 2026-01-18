@@ -84,60 +84,31 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"[Agent] Room name: {ctx.room.name}")
         logger.info(f"[Agent] Remote participants after connect: {len(ctx.room.remote_participants)}")
 
-        # 3. Handle Authentication - Wait for participant to join and get JWT
+        # 3. Handle Authentication - Extract JWT from participant metadata
         logger.info("[Agent] Step 3: Handling authentication...")
         user_jwt = None
         
-        # First, check if participant is already in job context
-        if ctx.job.participant:
+        # Try to get JWT from job participant metadata first (most direct)
+        if ctx.job.participant and ctx.job.participant.metadata:
             user_jwt = ctx.job.participant.metadata
-            logger.info(f"[Agent] Found JWT in job participant metadata (length: {len(user_jwt) if user_jwt else 0})")
+            logger.info(f"[Agent] Found JWT in job participant metadata (length: {len(user_jwt)})")
         
-        # If not found, wait for participant to join the room
+        # If not found, check remote participants (should be connected after ctx.connect())
         if not user_jwt:
-            logger.info("[Agent] JWT not in job context, waiting for participant to join room...")
-            logger.info(f"[Agent] Current remote participants count: {len(ctx.room.remote_participants)}")
-            
-            # List all current participants for debugging
-            if len(ctx.room.remote_participants) > 0:
-                logger.info("[Agent] Current participants in room:")
-                for p in ctx.room.remote_participants.values():
-                    logger.info(f"[Agent]   - {p.identity}: metadata={bool(p.metadata)}, metadata_len={len(p.metadata) if p.metadata else 0}")
-            
-            # Wait up to 30 seconds for participant to join (user needs time to connect)
-            max_wait_time = 30  # seconds - give user plenty of time to connect
-            check_interval = 1.0  # seconds
-            waited = 0
-            
-            while waited < max_wait_time and not user_jwt:
-                # Check existing participants
-                participant_count = len(ctx.room.remote_participants)
-                
-                for p in ctx.room.remote_participants.values():
-                    logger.info(f"[Agent] Checking participant: {p.identity}, has_metadata: {bool(p.metadata)}")
-                    if p.metadata:
-                        user_jwt = p.metadata
-                        logger.info(f"[Agent] ✓ Found JWT in participant: {p.identity} (length: {len(user_jwt)})")
-                        break
-                
-                if not user_jwt:
-                    if waited % 5 == 0:  # Log every 5 seconds to reduce noise
-                        logger.info(f"[Agent] Waiting for participant with JWT... ({waited:.0f}s / {max_wait_time}s, participants: {participant_count})")
-                    await asyncio.sleep(check_interval)
-                    waited += check_interval
+            for participant in ctx.room.remote_participants.values():
+                if participant.metadata:
+                    user_jwt = participant.metadata
+                    logger.info(f"[Agent] Found JWT in remote participant: {participant.identity} (length: {len(user_jwt)})")
+                    break
 
         if not user_jwt:
-            logger.error("[Agent] CRITICAL: No User JWT found after waiting for participant.")
-            logger.error(f"[Agent] Final participant count: {len(ctx.room.remote_participants)}")
-            logger.error("[Agent] This usually means:")
-            logger.error("[Agent]   1. The participant hasn't joined the room yet (check frontend connection)")
-            logger.error("[Agent]   2. The JWT wasn't passed in the participant metadata when creating the token")
-            logger.error("[Agent]   3. There's a timing issue - participant joined after agent timeout")
-            logger.error("[Agent]   4. The participant joined but without metadata")
-            # Still return but the agent is connected, so proper shutdown
+            logger.error("[Agent] CRITICAL: No User JWT found in participant metadata.")
+            logger.error(f"[Agent] Participant count: {len(ctx.room.remote_participants)}")
+            logger.error("[Agent] This usually means the JWT wasn't passed in participant metadata when creating the token.")
+            logger.error("[Agent] Check that frontend passes session.access_token as metadata in LiveKit token.")
             return
         
-        logger.info("[Agent] ✓ Authentication JWT found and validated successfully")
+        logger.info("[Agent] ✓ Authentication JWT found successfully")
 
         # 4. Initialize Tools
         logger.info("[Agent] Step 4: Initializing tools and checking environment variables...")

@@ -14,14 +14,14 @@ import { createClient } from '@/lib/supabase/server';
  */
 export async function GET(request: NextRequest) {
   try {
-    // Check authentication
+    // Get authenticated user (auth check handled by middleware)
     const supabase = await createClient();
     const {
       data: { user },
-      error: authError,
     } = await supabase.auth.getUser();
 
-    if (authError || !user) {
+    // Safety check (should never happen due to middleware, but TypeScript needs it)
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }

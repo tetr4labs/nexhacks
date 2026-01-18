@@ -16,15 +16,18 @@ import { AgentDispatchClient, RoomServiceClient } from "livekit-server-sdk";
  */
 export async function POST(request: NextRequest) {
   try {
-    // Check authentication
+    // Get authenticated user (auth check handled by middleware)
     const supabase = await createClient();
     const {
       data: { user },
-      error: authError,
     } = await supabase.auth.getUser();
 
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Safety check (should never happen due to middleware, but TypeScript needs it)
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
     }
 
     // Get LiveKit credentials
