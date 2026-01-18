@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import asyncio
 import json
 from dateutil import parser
 import os
@@ -22,7 +23,7 @@ from livekit.plugins import (
     silero,
 )
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from supabase import Client, ClientOptions, create_client
+from supabase import ClientOptions, create_client
 
 logger = logging.getLogger("Tetra")
 
@@ -32,6 +33,10 @@ load_dotenv(".env.local")
 class TetraAgent(Agent):
     def __init__(self, room: rtc.Room):
         self.room = room
+        self.user_id = None
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_ANON_KEY")
+        self.supabase = create_client(url, key)  # type: ignore
 
         super().__init__(
             instructions=f"""\
@@ -72,53 +77,9 @@ ERROR HANDLING:
         )
 
     async def on_enter(self):
-        logger.info("Agent joined room. Hydrating user session...")
+        await self.greet()
 
-        # 2. Find the human user to get their token
-        user = None
-        # Iterate over remote participants to find the human
-        for p in self.room.remote_participants.values():
-            if p.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
-                user = p
-                break
-
-        if not user:
-            logger.warning("No user found in room yet. Waiting...")
-            # Ideally we would wait here, but for now we log warning.
-            # The agent will still work but tools will fail until user is found/re-checked.
-            return
-        logger.info("Successfully found user.")
-
-        self.user_id = user.identity
-
-        # 3. Parse Token
-        user_token = ""
-        try:
-            if user.metadata:
-                data = json.loads(user.metadata)
-                user_token = data.get("supabase_token")
-        except Exception:
-            # Fallback if metadata is just the string
-            user_token = user.metadata
-
-        if user_token:
-            url = os.environ.get("SUPABASE_URL")
-            key = os.environ.get("SUPABASE_ANON_KEY")
-
-            # Create the client scoped to this user
-            self.supabase = create_client(
-                url,  # type: ignore
-                key,  # type: ignore
-                options=ClientOptions(
-                    headers={"Authorization": f"Bearer {user_token}"})
-            )
-            logger.info(
-                f"Supabase client authenticated for user {self.user_id}")
-        else:
-            logger.error(
-                "No Supabase token found in metadata. DB tools will fail.")
-
-        # 4. Generate Greeting
+    async def greet(self):
         await self.session.generate_reply(
             instructions="Greet the user and offer your assistance.",
             allow_interruptions=True,
@@ -131,14 +92,14 @@ ERROR HANDLING:
     ):
         """
         CRITICAL: Call this BEFORE scheduling or updating to check availability 
-        and get IDs for events/tasks.
+        and get IDs for events/tasks. Please use the date format YYYY-MM-DD.
         """
         logger.info(f"Fetching context for {date}")
         try:
             try:
                 dt_object = parser.parse(date)
             except parser.ParserError:
-                return f"Error: Invalid date format '{date}'."
+                return f"Error: Invalid date format '{date}'. Please use YYYY-MM-DD."
 
             day_str = dt_object.strftime("%Y-%m-%d")
             start_filter = f"{day_str}T00:00:00"
@@ -392,7 +353,7 @@ async def entrypoint(ctx: JobContext):
         preemptive_generation=True,
     )
 
-    logger.info("Starting session")
+    logger.info("Starting session...")
 
     await session.start(
         agent=agent,

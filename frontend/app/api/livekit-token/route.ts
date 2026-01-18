@@ -14,17 +14,20 @@ export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
 
-    // CHANGED: valid user check via getSession() is required
-    // to actually extract the raw JWT 'access_token'.
+    // Validate user securely
     const {
-      data: { session },
-    } = await supabase.auth.getSession();
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
 
-    if (!session || !session.user) {
+    if (userError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = session.user;
+    // Get session for access token
+    // const {
+    //   data: { session },
+    // } = await supabase.auth.getSession();
 
     // Get LiveKit credentials from environment
     const livekitUrl = process.env.LIVEKIT_URL;
@@ -50,10 +53,13 @@ export async function GET(request: NextRequest) {
     const token = new AccessToken(apiKey, apiSecret, {
       identity: user.id,
       name: participantName,
-      metadata: JSON.stringify({
-        supabase_token: session.access_token,
-      }),
+      // metadata: JSON.stringify({
+      //   supabase_token: session?.access_token || "",
+      // }),
     });
+
+    // Explicitly set identity to ensure it's in the JWT
+    token.identity = user.id;
 
     // Grant permissions
     token.addGrant({
