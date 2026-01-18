@@ -300,6 +300,35 @@ export default function ConsoleClient({
     };
   }, [supabase, selectedDayString, isTaskInSelectedDay, isEventInSelectedDay, sortTasks]);
 
+  // =============================================
+  // Timezone Sync
+  // Sync browser timezone to user profile if missing
+  // =============================================
+  useEffect(() => {
+    const syncTimezone = async () => {
+      // If profile timezone is missing or generic UTC, try to update it with browser's local timezone
+      if (!profileTimezone || profileTimezone === "UTC" || profileTimezone === "Etc/UTC") {
+        const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (browserTz && browserTz !== profileTimezone) {
+          console.log("Syncing timezone to profile:", browserTz);
+          try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+              await supabase
+                .from("user_profiles")
+                .update({ timezone: browserTz })
+                .eq("id", user.id);
+            }
+          } catch (err) {
+            console.error("Error syncing timezone:", err);
+          }
+        }
+      }
+    };
+    
+    syncTimezone();
+  }, [profileTimezone, supabase]);
+
   const openCreateTaskModal = useCallback(() => {
     setTaskError(null);
     setTaskModalMode("create");

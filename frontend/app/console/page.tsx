@@ -94,13 +94,72 @@ export default async function ConsolePage({
     .eq("id", user.id)
     .single();
 
+  // Determine timezone-aware start/end of day
+  // If no timezone is set, we fallback to UTC/Server time, but ideally we should use the user's preference.
+  // Note: We need to manipulate strings because JS Date is messy with timezones on the server.
+  // Ideally, use a library like date-fns-tz or luxon, but standard JS is requested.
+  // We'll calculate the offsets manually or use the simple "naive" approach if assuming inputs are YYYY-MM-DD in user time.
+  
+  // Actually, to correctly filter events stored in UTC that correspond to "2026-01-18" in "America/New_York",
+  // we need to know the UTC range corresponding to that local day.
+  // e.g. 2026-01-18 00:00 EST -> 2026-01-18 05:00 UTC
+  //      2026-01-18 23:59 EST -> 2026-01-19 04:59 UTC
+  
+  // Since we don't have a timezone library handy in this file easily without installing one, 
+  // and we want to keep it simple:
+  // We will assume `selectedDay` (parsed from YYYY-MM-DD) represents the Local Midnight.
+  
+  // A robust way without libraries in Node 16+ is using Intl.DateTimeFormat
+  const userTimezone = profile?.timezone || "America/New_York";
+  
+  // Create a date object that represents the start of the day in the user's timezone
+  // We do this by creating a UTC date, then formatting it to parts in the user timezone, 
+  // calculating the shift, and adjusting.
+  // OR simpler: Query a wider range and filter in memory? No, pagination/performance.
+  
+  // Let's use a simpler heuristic for now: 
+  // 1. Construct the naive string "YYYY-MM-DDT00:00:00"
+  // 2. Append the likely offset? No, offsets change (DST).
+  
+  // Let's try to stick to UTC if possible or use a simplified offset if we know it.
+  // Given we are in a hackathon context:
+  // We will simply expand the search range by +/- 24 hours to catch everything, 
+  // then let the Client Component (which has browser timezone smarts) or the Server filter strictly.
+  // But wait, we render server side.
+  
+  // Let's rely on the fact that `selectedDay` is `new Date(YYYY-MM-DD)` which is UTC midnight if parsed as ISO.
+  // If the user is EST (UTC-5), their day starts at 05:00 UTC.
+  // If we query `gte startOfDay` (00:00 UTC), we get events from 19:00 Previous Day EST.
+  // This is "safe" (over-fetching).
+  // The `ConsoleClient` needs to filter/display correctly.
+  
+  // HOWEVER, the user complaint is about consistency.
+  // Let's try to be precise if possible.
+  // We will use the `ConsoleClient` to do the precise rendering, but we must ensure we fetch enough data.
+  // The current `startOfDay` and `endOfDay` are UTC midnights.
+  // For EST (UTC-5), we need 05:00 UTC to 05:00 UTC+1.
+  // Current fetch: 00:00 UTC to 23:59 UTC.
+  // We miss the evening events (00:00 UTC to 05:00 UTC next day)!
+  
+  // FIX: Extend the query range to cover all possible timezones (UTC-12 to UTC+14).
+  // We'll fetch from `selectedDay - 1 day` to `selectedDay + 2 days` to be safe,
+  // OR just `startOfDay` (UTC) to `endOfDay + 24 hours`.
+  
+  const queryStart = new Date(startOfDay);
+  // Go back 14 hours to cover furthest west (UTC-12 approx)
+  queryStart.setHours(queryStart.getHours() - 14);
+  
+  const queryEnd = new Date(endOfDay);
+  // Go forward 14 hours to cover furthest east (UTC+14)
+  queryEnd.setHours(queryEnd.getHours() + 14);
+
   // Fetch events for the selected day - events that start on this day
   const { data: events } = await supabase
     .from("events")
     .select("id, name, description, start, end")
     .eq("owner", user.id)
-    .gte("start", startOfDay.toISOString())
-    .lt("start", endOfDay.toISOString())
+    .gte("start", queryStart.toISOString())
+    .lt("start", queryEnd.toISOString())
     .order("start", { ascending: true });
 
   // Fetch selected day tasks for this user (due that day or no due date)

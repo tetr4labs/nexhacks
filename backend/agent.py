@@ -1,5 +1,4 @@
-from datetime import datetime, timedelta
-import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 from dateutil import parser
 import os
@@ -7,6 +6,10 @@ import logging
 from typing import Annotated, Optional
 from dotenv import load_dotenv
 from livekit import rtc
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -16,14 +19,15 @@ from livekit.agents import (
     cli,
     inference,
     room_io,
-    function_tool
+    function_tool,
 )
+from livekit.agents.job import AutoSubscribe
 from livekit.plugins import (
     noise_cancellation,
     silero,
 )
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from supabase import ClientOptions, create_client
+from supabase import create_client
 
 logger = logging.getLogger("Tetra")
 
@@ -33,15 +37,66 @@ load_dotenv(".env.local")
 class TetraAgent(Agent):
     def __init__(self, room: rtc.Room):
         self.room = room
-        self.user_id = None
-        url = os.environ.get("SUPABASE_URL")
-        key = os.environ.get("SUPABASE_ANON_KEY")
-        self.supabase = create_client(url, key)  # type: ignore
+        # 1. Identify User
+        user = next(iter(self.room.remote_participants.values()), None)
+        self.user_id = user.identity if user else None
+        self.user_timezone = ZoneInfo("America/New_York")  # Default to EST
+
+        # 3. Parse Token
+        user_token = ""
+        try:
+            if user and user.metadata:
+                data = json.loads(user.metadata)
+                user_token = data.get("supabase_token")
+        except Exception:
+            # Fallback if metadata is just the string
+            user_token = user.metadata if user else ""
+
+        if user_token:
+            url = os.environ.get("SUPABASE_URL")
+            key = os.environ.get("SUPABASE_ANON_KEY")
+
+            from supabase import ClientOptions
+            # Create the client scoped to this user
+            self.supabase = create_client(
+                url,  # type: ignore
+                key,  # type: ignore
+                options=ClientOptions(
+                    headers={"Authorization": f"Bearer {user_token}"})
+            )
+            logger.info(
+                f"Supabase client authenticated for user {self.user_id}")
+                
+            # Fetch user profile to get timezone
+            try:
+                profile_resp = self.supabase.table("user_profiles").select("timezone").eq("id", self.user_id).single().execute()
+                if profile_resp.data and profile_resp.data.get("timezone"):
+                    tz_str = profile_resp.data.get("timezone")
+                    try:
+                        self.user_timezone = ZoneInfo(tz_str)
+                        logger.info(f"User timezone set to {tz_str}")
+                    except Exception:
+                        logger.warning(f"Invalid timezone {tz_str}, falling back to default")
+            except Exception as e:
+                logger.warning(f"Could not fetch user profile: {e}")
+                
+        else:
+            logger.error(
+                "No Supabase token found in metadata. DB tools will fail.")
+            # Fallback to anon key to prevent crash
+            url = os.environ.get("SUPABASE_URL")
+            key = os.environ.get("SUPABASE_ANON_KEY")
+            self.supabase = create_client(url, key)  # type: ignore
+
+        now_local = datetime.now(self.user_timezone)
 
         super().__init__(
             instructions=f"""\
 SYSTEM IDENTITY:
 You are TETRA, a proactive productivity coach.
+Current Time: {now_local.strftime("%I:%M %p")} ({self.user_timezone.key})
+Current Date: {now_local.strftime("%A, %Y-%m-%d")}
+
 Your goal is not just to manage the user's schedule, but to optimize their energy and sustainability. You bridge the gap between "I want to" and "I'm doing it" while ensuring the user doesn't burn out.
 
 OPERATIONAL PARAMETERS
@@ -102,8 +157,17 @@ ERROR HANDLING:
                 return f"Error: Invalid date format '{date}'. Please use YYYY-MM-DD."
 
             day_str = dt_object.strftime("%Y-%m-%d")
-            start_filter = f"{day_str}T00:00:00"
-            end_filter = f"{day_str}T23:59:59"
+            
+            # Create timezone-aware datetime for the start of the day in user's timezone
+            # Then convert to UTC for querying
+            start_local = datetime.combine(dt_object.date(), datetime.min.time()).replace(tzinfo=self.user_timezone)
+            end_local = datetime.combine(dt_object.date(), datetime.max.time()).replace(tzinfo=self.user_timezone)
+            
+            start_utc = start_local.astimezone(timezone.utc)
+            end_utc = end_local.astimezone(timezone.utc)
+            
+            start_filter = start_utc.isoformat()
+            end_filter = end_utc.isoformat()
 
             events_response = (
                 self.supabase.table("events")
@@ -130,9 +194,14 @@ ERROR HANDLING:
             else:
                 context_str += "[TIMELINE]:\n"
                 for e in events:
+                    # Parse UTC time from DB
                     start_str = e["start"].replace('Z', '+00:00')
-                    dt = datetime.fromisoformat(start_str)
-                    time_str = dt.strftime("%H:%M")
+                    dt_utc = datetime.fromisoformat(start_str)
+                    
+                    # Convert to user timezone for display
+                    dt_local = dt_utc.astimezone(self.user_timezone)
+                    time_str = dt_local.strftime("%H:%M")
+                    
                     name = e.get("name", "Untitled")
                     # ADDED ID HERE so the LLM can reference it for updates
                     context_str += f"- {time_str}: {name} (ID: {e['id']})\n"
@@ -165,19 +234,28 @@ ERROR HANDLING:
         """Schedule a new calendar event."""
         logger.info(f"Scheduling: {title}")
         try:
-            start_dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
-            end_dt = start_dt + timedelta(minutes=duration_minutes)
+            # Parse input time
+            # If naive, assume user timezone. If aware, convert to UTC.
+            dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=self.user_timezone)
+            
+            start_dt_utc = dt.astimezone(timezone.utc)
+            end_dt_utc = start_dt_utc + timedelta(minutes=duration_minutes)
 
             data = {
                 "name": title,
-                "start": start_iso,
-                "end": end_dt.isoformat(),
+                "start": start_dt_utc.isoformat(),
+                "end": end_dt_utc.isoformat(),
                 "description": notes or "",
                 "owner": self.user_id  # Explicitly set owner to satisfy RLS
             }
 
             self.supabase.table("events").insert(data).execute()
-            return f"Confirmed. Scheduled '{title}' for {start_dt.strftime('%H:%M')}."
+            
+            # Return confirmation in user's local time
+            start_local = start_dt_utc.astimezone(self.user_timezone)
+            return f"Confirmed. Scheduled '{title}' for {start_local.strftime('%H:%M')}."
         except Exception as e:
             logger.error(f"Error scheduling event: {e}", exc_info=True)
             return f"Failed to schedule: {str(e)}"
@@ -337,8 +415,6 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name="Tetra")
 async def entrypoint(ctx: JobContext):
-    agent = TetraAgent(ctx.room)
-
     session = AgentSession(
         stt=inference.STT(
             model="assemblyai/universal-streaming", language="en"),
@@ -354,6 +430,14 @@ async def entrypoint(ctx: JobContext):
     )
 
     logger.info("Starting session...")
+
+    logger.info(f"Connecting to room {ctx.room.name}...")
+    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+    logger.info("Waiting for participant...")
+    participant = await ctx.wait_for_participant()
+    logger.info(f"Participant {participant.identity} joined.")
+
+    agent = TetraAgent(ctx.room)
 
     await session.start(
         agent=agent,
