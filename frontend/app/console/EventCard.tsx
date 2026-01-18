@@ -52,91 +52,91 @@ export default function EventCard({
 
   return (
     <>
-      {/* Collapsed event card in timeline */}
+      {/* Collapsed event card in timeline - angular, high contrast */}
       <div
         onClick={handleClick}
-        className="absolute left-1 right-1 px-3 py-2 rounded border border-[#00ffff]/30 bg-[#00ffff]/5 hover:bg-[#00ffff]/10 transition-colors cursor-pointer group overflow-hidden"
+        className="absolute left-1 right-1 px-3 py-2 border-2 border-white bg-black/40 hover:bg-white/10 transition-colors cursor-pointer group overflow-hidden"
         style={style}
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             {/* Event title - truncated */}
-            <p className="font-mono text-sm text-[#00ffff] truncate">
-              {name || "Untitled Event"}
+            <p className="font-mono text-sm text-white uppercase tracking-wider truncate">
+              {name || "UNTITLED EVENT"}
             </p>
             {/* Event time */}
-            <p className="text-xs text-zinc-500 mt-0.5">
+            <p className="text-xs text-white/70 mt-0.5 font-mono">
               {formatEventTime(start)}
               {end && ` - ${formatEventTime(end)}`}
             </p>
           </div>
           {/* Expand indicator */}
           <div className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-            <span className="text-[#00ffff]/50 text-xs">▶</span>
+            <span className="text-white/50 text-xs">▶</span>
           </div>
         </div>
         {/* Description preview - hidden if overflows */}
         {description && (
-          <p className="text-xs text-zinc-600 mt-1 truncate">
+          <p className="text-xs text-white/60 mt-1 truncate font-mono">
             {description}
           </p>
         )}
       </div>
 
-      {/* Expanded modal overlay */}
+      {/* Expanded modal overlay - high contrast */}
       {isExpanded && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm"
           onClick={handleOverlayClick}
         >
-          {/* Expanded event card */}
+          {/* Expanded event card - angular */}
           <div
-            className="relative w-full max-w-lg mx-4 glass-panel p-6 animate-fade-in"
+            className="relative w-full max-w-lg mx-4 glass-panel p-8 border-2 border-white animate-fade-in"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Close button */}
             <button
               onClick={() => setIsExpanded(false)}
-              className="absolute top-4 right-4 text-zinc-500 hover:text-[#00ffff] transition-colors"
+              className="absolute top-4 right-4 text-white hover:bg-white/10 transition-colors p-2"
               aria-label="Close"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
 
             {/* Event header */}
-            <div className="mb-4">
-              <h3 className="font-mono text-lg font-bold text-[#00ffff] pr-8">
-                {name || "Untitled Event"}
+            <div className="mb-6">
+              <h3 className="font-mono text-lg font-bold text-white uppercase tracking-wider pr-8">
+                {name || "UNTITLED EVENT"}
               </h3>
-              <p className="text-sm text-zinc-400 mt-1 font-mono">
+              <p className="text-sm text-white/70 mt-2 font-mono">
                 {formatEventTime(start)}
                 {end && ` - ${formatEventTime(end)}`}
               </p>
             </div>
 
-            {/* Divider */}
-            <div className="h-px bg-gradient-to-r from-[#00ffff]/30 via-[#00ffff]/10 to-transparent mb-4" />
+            {/* Divider - angular */}
+            <div className="h-[2px] bg-white mb-6" />
 
             {/* Full description */}
             {description ? (
               <div className="max-h-64 overflow-y-auto custom-scrollbar">
-                <p className="text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed">
+                <p className="text-sm text-white/80 whitespace-pre-wrap leading-relaxed font-mono">
                   {description}
                 </p>
               </div>
             ) : (
-              <p className="text-sm text-zinc-600 italic">No description</p>
+              <p className="text-sm text-white/60 italic font-mono">NO DESCRIPTION</p>
             )}
 
             {/* Close button at bottom */}
             <div className="mt-6 flex justify-end">
               <button
                 onClick={() => setIsExpanded(false)}
-                className="btn-neon-secondary text-sm px-4 py-2"
+                className="btn-neon-secondary text-sm px-6 py-2 uppercase tracking-wider"
               >
-                Close
+                CLOSE
               </button>
             </div>
           </div>

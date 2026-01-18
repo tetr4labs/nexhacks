@@ -20,6 +20,15 @@ Create `backend/.env.local` with your LiveKit credentials and API keys for:
 - Google AI Studio (for LLM)
 - ElevenLabs (for TTS)
 
+Optional (Arcade Gmail via MCP):
+```bash
+# Arcade MCP Gateway URL (see Arcade MCP Gateways quickstart)
+ARCADE_MCP_URL=https://api.arcade.dev/mcp/<YOUR_GATEWAY_SLUG>
+
+# Arcade API key (used as `Authorization: Bearer ...`)
+ARCADE_API_KEY=your_arcade_api_key
+```
+
 ## Running
 
 **Run the frontend:**
@@ -46,3 +55,15 @@ pnpm dev
 5. Start speaking - Tetra will respond!
 
 The agent will automatically join the room when you connect.
+
+## Testing Arcade Gmail MCP
+
+1. In Arcade, create an **MCP Gateway** that includes the **Gmail** tools and copy its URL.
+2. Set `ARCADE_MCP_URL` and `ARCADE_API_KEY` in `backend/.env.local`.
+3. Start the agent and connect from the Talk UI.
+4. Ask Tetra something that should require Gmail tools, for example:
+   - “List my 5 most recent emails.”
+   - “Search my email for ‘invoice’ and summarize the top results.”
+
+If Gmail isn’t authorized yet for that user, Arcade will return an authorization step (OAuth). Complete
+the Google consent flow for the requested scopes, then retry the request.
