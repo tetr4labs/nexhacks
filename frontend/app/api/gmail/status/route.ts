@@ -52,8 +52,10 @@ export async function GET() {
       .eq("id", user.id)
       .single();
 
-    // Use Supabase user.id as Arcade user_id (matches backend/agent.py behavior)
-    const arcadeUserId = user.id;
+    // Arcade "Arcade.dev users only" verification expects the app's user_id to match
+    // the signed-in Arcade account identity (typically email). Use email when available.
+    // Fallback to user.id only if email is missing (rare).
+    const arcadeUserId = user.email || user.id;
 
     // Initialize Arcade client
     const arcadeBaseURL = getArcadeBaseURL();
@@ -76,11 +78,12 @@ export async function GET() {
       });
 
       // Extract authorization status from the response
-      authorizationStatus = authResponse.status || null;
-      connected = authResponse.status === "completed";
+      const responseAny: any = authResponse as any;
+      authorizationStatus = responseAny.status || null;
+      connected = responseAny.status === "completed";
       
       // Arcade JS SDK response doesn't expose tokenStatus; cache status as token_status.
-      tokenStatus = authResponse.status ?? null;
+      tokenStatus = responseAny.status ?? null;
     } catch (arcadeError) {
       // Log but don't fail - Arcade might be temporarily unavailable
       console.error("[gmail/status] Error checking Arcade auth:", arcadeError);

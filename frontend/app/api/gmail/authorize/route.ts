@@ -44,8 +44,10 @@ export async function POST() {
       );
     }
 
-    // Use Supabase user.id as Arcade user_id (matches backend/agent.py behavior)
-    const arcadeUserId = user.id;
+    // Arcade "Arcade.dev users only" verification expects the app's user_id to match
+    // the signed-in Arcade account identity (typically email). Use email when available.
+    // Fallback to user.id only if email is missing (rare).
+    const arcadeUserId = user.email || user.id;
 
     // Initialize Arcade client
     console.log("[gmail/authorize] Initializing Arcade client for user:", arcadeUserId);
@@ -64,9 +66,21 @@ export async function POST() {
       tool_name: "Gmail.ListEmails",
       user_id: arcadeUserId,
     });
-    console.log("[gmail/authorize] Authorization response:", { 
-      status: authResponse.status, 
-      hasUrl: !!authResponse.authorization_url,
+
+    // Arcade's API currently returns `url`/`id` (not `authorization_url`/`authorization_id`).
+    // Keep compatibility with either shape so upgrades don't break Gmail auth.
+    const responseAny: any = authResponse as any;
+    const connectUrl =
+      responseAny.url ||
+      responseAny.authorization_url ||
+      responseAny.authorizationUrl ||
+      null;
+
+    console.log("[gmail/authorize] Authorization response:", {
+      status: responseAny.status,
+      hasUrl: !!connectUrl,
+      // Useful for debugging provider configuration; never log secrets.
+      keys: Object.keys(responseAny || {}),
     });
 
     // If status is 'completed', user is already authorized
@@ -92,8 +106,8 @@ export async function POST() {
     // Return the authorization URL for the user to complete OAuth
     return NextResponse.json({
       status: authResponse.status || "pending",
-      // NOTE: Arcade JS SDK uses `authorization_url`
-      url: authResponse.authorization_url || null,
+      // NOTE: Arcade returns `url` (current) or `authorization_url` (older/typed field).
+      url: connectUrl,
       message: "Please complete Gmail authorization",
     });
   } catch (error) {

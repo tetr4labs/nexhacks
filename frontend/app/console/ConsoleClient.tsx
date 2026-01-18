@@ -535,6 +535,20 @@ export default function ConsoleClient({
    */
   const handleGmailConnect = useCallback(async () => {
     setIsGmailAuthorizing(true);
+
+    // IMPORTANT: open a popup synchronously on the click event.
+    // Browsers often block `window.open()` if it's called after an `await`/promise tick.
+    // We open a blank window immediately, then navigate it once we receive the Arcade URL.
+    const popup = window.open("about:blank", "_blank", "width=600,height=700");
+    if (popup) {
+      // Prevent reverse-tabnabbing once we navigate to a third-party OAuth page.
+      // (We keep a reference so we can set `location`, so we can't rely on `noopener` here.)
+      try {
+        popup.opener = null;
+      } catch {
+        // Some browsers may disallow setting opener; safe to ignore.
+      }
+    }
     
     try {
       const response = await fetch("/api/gmail/authorize", { method: "POST" });
@@ -553,6 +567,12 @@ export default function ConsoleClient({
           error: errorData.error || errorData,
           details: errorData.details,
         });
+        // Close the blank popup if we couldn't get a URL.
+        try {
+          popup?.close();
+        } catch {
+          // ignore
+        }
         setIsGmailAuthorizing(false);
         return;
       }
@@ -563,13 +583,30 @@ export default function ConsoleClient({
       if (data.status === "completed") {
         setGmailConnected(true);
         setShowGmailPrompt(false);
+        try {
+          popup?.close();
+        } catch {
+          // ignore
+        }
         setIsGmailAuthorizing(false);
         return;
       }
 
-      // Open the authorization URL in a new tab
+      // Navigate the popup to the authorization URL
       if (data.url) {
-        window.open(data.url, "_blank", "noopener,noreferrer");
+        if (popup && !popup.closed) {
+          popup.location.href = data.url;
+        } else {
+          // Fallback: if popup was blocked, fall back to a full-page redirect.
+          window.location.href = data.url;
+        }
+      } else {
+        // No URL returned (misconfigured provider / Arcade issue) — close the blank popup.
+        try {
+          popup?.close();
+        } catch {
+          // ignore
+        }
       }
 
       // Poll for completion (up to 2 minutes, every 3 seconds)
@@ -1715,6 +1752,12 @@ function Timeline({
                 <div className="flex-1 relative" />
               </div>
             ))}
+            <div className="flex items-start h-[20px] border-t border-white/20">
+              <div className="w-16 pr-3 text-right text-xs font-mono text-white opacity-60 -mt-2">
+                23:59
+              </div>
+              <div className="flex-1 relative" />
+            </div>
           </div>
 
           {/* Events layer */}

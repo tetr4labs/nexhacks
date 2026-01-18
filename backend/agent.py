@@ -5,6 +5,7 @@ from dateutil import parser
 import os
 import logging
 from typing import Annotated, Optional
+import base64
 from dotenv import load_dotenv
 from livekit import rtc
 from livekit.agents import (
@@ -113,9 +114,30 @@ ERROR HANDLING:
 - If a tool fails, explain why briefly.""",
         )
 
-    async def on_enter(self, session: AgentSession):
-        # LiveKit Agents (voice) calls `on_enter(session)`; storing it makes
-        # it explicit and avoids signature mismatches across versions.
+    async def on_enter(self):
+        """
+        LiveKit Agents calls `Agent.on_enter()` with **no arguments** in the version used
+        by this repo.
+
+        We still want access to the `AgentSession` object (to generate greetings, etc.).
+        The session is available via an internal contextvar set by LiveKit right before
+        calling `on_enter()`, so we hydrate `self.session` from there.
+        """
+        # NOTE: This is an internal LiveKit context var, but it's the most reliable way
+        # to stay compatible with the installed `livekit-agents` behavior.
+        session: Optional[AgentSession] = None
+        try:
+            from livekit.agents.voice import agent_activity as _aa  # type: ignore
+
+            data = _aa._OnEnterContextVar.get()  # pyright: ignore[reportPrivateUsage]
+            session = getattr(data, "session", None)
+        except Exception:
+            session = None
+
+        if session is None:
+            logger.warning("on_enter() called but AgentSession was not available; skipping greeting.")
+            return
+
         self.session = session
         logger.info("Agent joined room. Hydrating user session...")
 
@@ -204,6 +226,33 @@ ERROR HANDLING:
         )
         logger.info(f"Supabase client authenticated for user {self.user_id}")
         return True
+
+    def _email_from_supabase_jwt(self, jwt_token: str) -> Optional[str]:
+        """
+        Extract the user's email from a Supabase JWT without verifying the signature.
+
+        Why:
+        - Arcade's "Arcade.dev users only" verification often expects the provided `user_id`
+          to match the currently signed-in Arcade account identity (email).
+        - We already have the user's Supabase JWT in LiveKit participant metadata.
+
+        Security:
+        - We do NOT trust this value for authorization decisions. It's only used as an
+          identifier for Arcade token scoping.
+        """
+        try:
+            parts = jwt_token.split(".")
+            if len(parts) < 2:
+                return None
+            payload_b64 = parts[1]
+            # base64url decode with padding
+            payload_b64 += "=" * (-len(payload_b64) % 4)
+            payload_json = base64.urlsafe_b64decode(payload_b64.encode("utf-8")).decode("utf-8")
+            payload = json.loads(payload_json)
+            email = payload.get("email")
+            return email if isinstance(email, str) and email else None
+        except Exception:
+            return None
 
     @function_tool()
     async def get_day_context(
@@ -602,9 +651,39 @@ async def entrypoint(ctx: JobContext):
 
     mcp_servers = []
     if arcade_mcp_url and arcade_api_key:
-        arcade_user_id = ctx.room.name or ""
-        if arcade_user_id.startswith("room-"):
-            arcade_user_id = arcade_user_id.removeprefix("room-")
+        # Arcade stores OAuth tokens per `Arcade-User-ID`. If Arcade is configured to verify
+        # against Arcade.dev users, this should usually be the user's email.
+        #
+        # We try to derive email from the Supabase JWT stored in the LiveKit participant metadata.
+        # If the user hasn't joined yet, we fall back to the room name (uuid) so the agent can start.
+        arcade_user_id: str = ""
+
+        async def _derive_arcade_user_id(max_wait_seconds: int = 10) -> str:
+            attempts = max(1, int(max_wait_seconds / 0.2))
+            for _ in range(attempts):
+                for p in ctx.room.remote_participants.values():
+                    if p.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+                        # Try to read Supabase JWT from participant metadata (set by frontend).
+                        user_token = ""
+                        try:
+                            if p.metadata:
+                                data = json.loads(p.metadata)
+                                user_token = data.get("supabase_token") or ""
+                        except Exception:
+                            user_token = p.metadata or ""
+                        if user_token:
+                            email = agent._email_from_supabase_jwt(user_token)
+                            if email:
+                                return email
+                await asyncio.sleep(0.2)
+
+            # Fallback: room name convention is `room-${user.id}`
+            rid = ctx.room.name or ""
+            if rid.startswith("room-"):
+                rid = rid.removeprefix("room-")
+            return rid
+
+        arcade_user_id = await _derive_arcade_user_id(max_wait_seconds=10)
 
         # Restrict to read-only Gmail tools so the voice agent can't send/modify email.
         allowed_tools = [
