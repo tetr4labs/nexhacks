@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from dateutil import parser
 import os
 import logging
 from typing import Annotated, Optional
@@ -27,14 +28,49 @@ logger = logging.getLogger("Tetra")
 load_dotenv(".env.local")
 
 
+def format_date(date):
+    try:
+        dt_object = parser.parse(date)
+    except parser.ParserError:
+        # Fallback: If the LLM sends "tomorrow" literally, return a helpful error
+        # guiding it back to specific dates, or handle relative logic here.
+        return f"I couldn't understand the date '{date}'. Please provide the date in YYYY-MM-DD format."
+    return dt_object.strftime("%Y-%m-%d")
+
+
 class TetraAgent(Agent):
     def __init__(self):
+        now = datetime.now()
+        # Added "Standard Time" to help LLM understand it's a specific zone
+        time_context = now.strftime("%A, %B %d, %Y at %I:%M %p %Z")
+
         super().__init__(
-            instructions="""\
-You are a friendly voice assistant named Tetra. Your purpose is to help with task creation, 
-event scheduling, and accountability tracking.
-DO NOT INTRODUCE YOURSELF. Ask the user what you can schedule or what they want to do today.
-Respond in plain text only. Keep replies brief. Use any tools available to you.""",
+            instructions=f"""\
+SYSTEM IDENTITY:
+You are TETRA, a high-efficiency tactical day-planning OS. You are not a chatty assistant; you are a productivity engine.
+Your goal is to turn spoken "intentions" into rigid database commitments.
+
+OPERATIONAL PARAMETERS:
+- SYSTEM TIME: {time_context}. Trust this timestamp implicitly for all relative date calculations (today, tomorrow).
+- TONE: Professional, futuristic, concise, and commanding.
+- AUDIO OUTPUT: strictly plain text. NO markdown (no asterisks, no hashes). 
+- BREVITY: Speak in short, punchy sentences. 1-2 sentences max for confirmations.
+
+CORE DIRECTIVES:
+1. THE INTENT LEDGER: When a user says they "want" to do something (e.g., "I want to hit the gym"), treat it as a 'Commitment'. Immediately propose logging it or scheduling it.
+2. SCHEDULING LOGIC: 
+   - NEVER schedule blindly. If asked to schedule something without a specific time, ALWAYS call `get_day_context` first to find a gap.
+   - If a specific time is requested, verify it doesn't conflict by calling `get_day_context`.
+3. ACCOUNTABILITY: If the user asks "What's my day?", summarize the structure (Events) and the pressure (Tasks).
+
+PHRASEOLOGY (Use these vibes):
+- Instead of "I have scheduled that for you," say "Confirmed. Event injected at [Time]."
+- Instead of "What do you want to do?", say "Awaiting directives." or "State your intention."
+- Instead of "Done," say "Status updated." or "Commitment logged."
+
+ERROR HANDLING:
+- If a user provides a relative date (e.g., "next Friday"), calculate the specific date based on SYSTEM TIME before calling tools.
+- If a tool fails, report the error briefly: "System error: [Reason].""",
             #  mcp_servers=[
             #     mcp.MCPServerHTTP(
             #         url="https://example.com/mcp",
@@ -45,31 +81,36 @@ Respond in plain text only. Keep replies brief. Use any tools available to you."
         url = os.environ.get("SUPABASE_URL")
         key = os.environ.get("SUPABASE_ANON_KEY")
 
-        # Create Supabase client with default options
         self.supabase: Client = create_client(url, key)  # type: ignore
 
     async def on_enter(self):
+        # Cyberpunk intro - short and active
         await self.session.generate_reply(
-            instructions="""Greet the user and offer your assistance.""",
+            instructions="Greet the user and offer your assistance.",
             allow_interruptions=True,
         )
-
-    """
-    A collection of tools to manage scheduling and tasks via Supabase.
-    """
 
     @function_tool()
     async def get_day_context(
         self,
-        date: Annotated[str, "The target date in YYYY-MM-DD format"]
+        date: Annotated[str,
+                        "The target date. Can be YYYY-MM-DD or a full ISO timestamp."]
     ):
         """
-        Get the user's schedule, tasks, and commitments for a specific date range.
+        CRITICAL: Call this BEFORE scheduling anything to check availability. 
+        Gets the user's schedule, tasks, and commitments for a specific date range.
         """
         logger.info(f"Fetching context for {date}")
         try:
-            start_filter = f"{date}T00:00:00"
-            end_filter = f"{date}T23:59:59"
+            # ROBUST PARSING (From previous step)
+            try:
+                dt_object = parser.parse(date)
+            except parser.ParserError:
+                return f"Error: Invalid date format '{date}'. Retry with YYYY-MM-DD."
+
+            day_str = dt_object.strftime("%Y-%m-%d")
+            start_filter = f"{day_str}T00:00:00"
+            end_filter = f"{day_str}T23:59:59"
 
             events_response = (
                 self.supabase.table("events")
@@ -89,21 +130,25 @@ Respond in plain text only. Keep replies brief. Use any tools available to you."
             )
             tasks = tasks_response.data
 
-            context_str = f"## Agenda for {date}\n"
+            # FORMATTING FOR LLM CONSUMPTION
+            # We use a very strict format so the LLM parses it easily
+            context_str = f"## STATUS REPORT FOR {day_str}\n"
 
             if not events:
-                context_str += "- No fixed events scheduled.\n"
+                context_str += "[TIMELINE]: Clear. No fixed events.\n"
             else:
+                context_str += "[TIMELINE]:\n"
                 for e in events:
                     start_str = e["start"].replace('Z', '+00:00')
                     dt = datetime.fromisoformat(start_str)
+                    # 24hr format is better for bots
                     time_str = dt.strftime("%H:%M")
                     name = e.get("name", "Untitled")
-                    context_str += f"- [{time_str}] {name} (ID: {e['id']})\n"
+                    context_str += f"- {time_str}: {name}\n"
 
-            context_str += "\n## Active Tasks / Commitments\n"
+            context_str += "\n[INTENT LEDGER / TASKS]:\n"
             if not tasks:
-                context_str += "- No active tasks.\n"
+                context_str += "- No open loops.\n"
             else:
                 for t in tasks:
                     due = f" (Due: {t['due']})" if t.get("due") else ""
@@ -114,7 +159,7 @@ Respond in plain text only. Keep replies brief. Use any tools available to you."
 
         except Exception as e:
             logger.error(f"Error in get_day_context: {e}")
-            return f"Error accessing database: {str(e)}"
+            return f"System Alert: Database connection failed. Details: {str(e)}"
 
     async def schedule_event(
         self,

@@ -16,4 +16,5 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "supabase>=2.27.2",
     "livekit-plugins-noise-cancellation>=0.2.5",
+    "python-dateutil>=2.9.0.post0",
 ]

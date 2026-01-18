@@ -211,6 +211,7 @@ dependencies = [
     { name = "livekit-plugins-noise-cancellation" },
     { name = "livekit-plugins-silero" },
     { name = "livekit-plugins-turn-detector" },
+    { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "supabase" },
 ]
@@ -226,6 +227,7 @@ requires-dist = [
     { name = "livekit-plugins-noise-cancellation", specifier = ">=0.2.5" },
     { name = "livekit-plugins-silero", specifier = ">=1.3.11" },
     { name = "livekit-plugins-turn-detector", specifier = ">=1.3.11" },
+    { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "supabase", specifier = ">=2.27.2" },
 ]
