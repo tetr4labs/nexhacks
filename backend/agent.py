@@ -192,7 +192,6 @@ def prewarm(proc: JobProcess):
 server.setup_fnc = prewarm
 
 
-
 @server.rtc_session(agent_name="Tetra")
 async def entrypoint(ctx: JobContext):
     session = AgentSession(
@@ -211,6 +210,8 @@ async def entrypoint(ctx: JobContext):
 
     agent = TetraAgent()
 
+    logger.info("Starting session")
+
     await session.start(
         agent=agent,
         room=ctx.room,
@@ -222,12 +223,7 @@ async def entrypoint(ctx: JobContext):
         ),
     )
 
-    await agent.on_enter()
-
-    await self.session.generate_reply(
-        instructions="""Greet the user and offer your assistance.""",
-        allow_interruptions=True,
-    )
+    logger.info("Finished session")
 
 
 if __name__ == "__main__":
