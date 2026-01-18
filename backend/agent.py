@@ -87,6 +87,7 @@ ERROR HANDLING:
             # Ideally we would wait here, but for now we log warning.
             # The agent will still work but tools will fail until user is found/re-checked.
             return
+        logger.info("Successfully found user.")
 
         self.user_id = user.identity
 
@@ -274,6 +275,7 @@ ERROR HANDLING:
                 updates).eq("id", event_id).execute()
             return f"Event {event_id} updated successfully."
         except Exception as e:
+            logger.error(f"Error updating event: {e}", exc_info=True)
             return f"Error updating event: {str(e)}"
 
     @function_tool()
