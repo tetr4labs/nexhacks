@@ -283,6 +283,14 @@ export default function TalkPage() {
       try {
         await newRoom.localParticipant.setMicrophoneEnabled(true);
         console.log("Microphone enabled");
+        
+        // Verify microphone track is published
+        const micPublication = newRoom.localParticipant.audioTrackPublications.values().next().value;
+        if (micPublication) {
+          console.log("Microphone track published:", micPublication.trackSid);
+        } else {
+          console.warn("Microphone track not found after enabling");
+        }
       } catch (micError) {
         console.error("Failed to enable microphone:", micError);
         setError("Failed to enable microphone. Please check permissions.");

@@ -39,9 +39,15 @@ class TetraAgent(Agent):
 
     # Note: We keep this as a custom method we call manually
     async def say_hello(self):
-        await self.session.generate_reply(
-            instructions="Ask the user what you can schedule or what they want to do today."
-        )
+        logger.info("[Agent] Generating greeting...")
+        try:
+            await self.session.generate_reply(
+                instructions="Ask the user what you can schedule or what they want to do today."
+            )
+            logger.info("[Agent] Greeting generated and should be playing")
+        except Exception as e:
+            logger.error(f"[Agent] Error generating greeting: {e}", exc_info=True)
+            raise
 
 # --- SERVER SETUP ---
 
@@ -88,7 +94,20 @@ async def entrypoint(ctx: JobContext):
 
     tetra_tools = TetraTools(supabase_url, supabase_key, user_jwt)
     
-    # 4. Define Session 
+    # 4. Validate API keys before creating session
+    assemblyai_api_key = os.environ.get("ASSEMBLYAI_API_KEY")
+    google_api_key = os.environ.get("GOOGLE_API_KEY")
+    cartesia_api_key = os.environ.get("CARTESIA_API_KEY")
+    
+    if not assemblyai_api_key:
+        logger.error("[Agent] ASSEMBLYAI_API_KEY not found. Speech-to-text will not work.")
+    if not google_api_key:
+        logger.error("[Agent] GOOGLE_API_KEY not found. LLM will not work.")
+    if not cartesia_api_key:
+        logger.error("[Agent] CARTESIA_API_KEY not found. Text-to-speech will not work.")
+    
+    # 5. Define Session 
+    logger.info("[Agent] Initializing AgentSession with STT, LLM, and TTS...")
     session = AgentSession(
         vad=vad,
         stt=inference.STT(model="assemblyai/universal-streaming", language="en"),
@@ -99,11 +118,13 @@ async def entrypoint(ctx: JobContext):
         ),
         turn_detection=MultilingualModel(),
     )
+    logger.info("[Agent] AgentSession initialized")
 
-    # 5. Start the Agent
+    # 6. Start the Agent
     # FIX: Pass tetra_tools.tools (the list), not tetra_tools (the instance)
     agent = TetraAgent(tools=tetra_tools.tools)
 
+    # Start the session with proper audio configuration
     await session.start(
         agent=agent,
         room=ctx.room,
@@ -111,11 +132,24 @@ async def entrypoint(ctx: JobContext):
             audio_input=room_io.AudioInputOptions(
                 noise_cancellation=None, 
             ),
+            # Explicitly enable audio output (TTS will publish audio tracks)
+            audio_output=room_io.AudioOutputOptions(),
         ),
     )
     
-    # Trigger the greeting
-    await agent.say_hello()
+    logger.info("[Agent] Session started, waiting for session to be ready...")
+    
+    # Wait a moment for the session to fully initialize before triggering greeting
+    import asyncio
+    await asyncio.sleep(0.5)
+    
+    # Trigger the greeting - this will generate TTS audio
+    logger.info("[Agent] Triggering greeting...")
+    try:
+        await agent.say_hello()
+        logger.info("[Agent] Greeting sent successfully")
+    except Exception as e:
+        logger.error(f"[Agent] Error sending greeting: {e}", exc_info=True)
 
 if __name__ == "__main__":
     cli.run_app(server)
