@@ -603,6 +603,50 @@ export default function ConsoleClient({
     [commitBufferedTranscripts],
   );
 
+  // Render transcript text with clickable links (e.g., Arcade OAuth authorization URLs).
+  // We intentionally do NOT use `dangerouslySetInnerHTML` here to avoid XSS risks.
+  const renderTranscriptText = useCallback((text: string) => {
+    // A conservative URL matcher: good enough for OAuth links shown by Arcade/LiveKit.
+    // We avoid trailing punctuation like ")" or "," which often surrounds URLs in text.
+    const urlRegex = /https?:\/\/[^\s),]+/g;
+
+    const nodes: React.ReactNode[] = [];
+    let lastIndex = 0;
+
+    for (const match of text.matchAll(urlRegex)) {
+      const url = match[0];
+      const start = match.index ?? 0;
+      const end = start + url.length;
+
+      // Push any plain text before the URL
+      if (start > lastIndex) {
+        nodes.push(text.slice(lastIndex, start));
+      }
+
+      // Push the URL as a clickable link
+      nodes.push(
+        <a
+          key={`url-${start}-${end}`}
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-cyan-300 underline break-all hover:text-cyan-200"
+        >
+          {url}
+        </a>,
+      );
+
+      lastIndex = end;
+    }
+
+    // Push any trailing plain text after the last URL
+    if (lastIndex < text.length) {
+      nodes.push(text.slice(lastIndex));
+    }
+
+    return <>{nodes}</>;
+  }, []);
+
   // =============================================
   // Audio track handling (ported from /talk)
   // =============================================
@@ -1328,7 +1372,7 @@ export default function ConsoleClient({
                             </span>
                           </div>
                           <p className="text-zinc-300 font-mono text-xs">
-                            {entry.text}
+                            {renderTranscriptText(entry.text)}
                           </p>
                         </div>
                       ))}

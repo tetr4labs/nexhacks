@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import asyncio
 import json
 from dateutil import parser
 import os
@@ -24,6 +25,11 @@ from livekit.plugins import (
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from supabase import Client, ClientOptions, create_client
 
+# MCP (Arcade Gateway -> Gmail tools)
+# Note: LiveKit Agents requires the optional `mcp` extra for this import to work:
+#   pip install 'livekit-agents[mcp]'
+from livekit.agents.llm.mcp import MCPServerHTTP
+
 logger = logging.getLogger("Tetra")
 
 load_dotenv(".env.local")
@@ -44,6 +50,23 @@ OPERATIONAL PARAMETERS
 - TIME FORMAT: 12-hour clock (2 pm).
 - DATE FORMAT: Natural/Relative.
 
+EMAIL (GMAIL) CAPABILITIES (READ-ONLY):
+- You MAY use Arcade Gmail tools to read/summarize emails if available.
+- IMPORTANT: This agent is a voice assistant. Prefer short, skimmable summaries.
+- NEVER send emails, create drafts, delete, label, or modify the user's mailbox.
+- If an email tool call returns an authorization URL, tell the user to open it to connect Gmail,
+  then retry the email request.
+- When summarizing emails, do NOT read long bodies aloud; summarize and offer to open details.
+- Use these read-only tools when needed:
+  - Gmail.ListEmails (recent messages)
+  - Gmail.ListEmailsByHeader (filter by sender/subject)
+  - Gmail.GetThread (when the user asks about the full conversation)
+
+EMAIL ROUTING RULE (IMPORTANT):
+- If the user's request is about EMAIL (e.g. "inbox", "email", "Gmail", "message", "thread",
+  "sender", "subject", "unread", "search my email"), then DO NOT call calendar/task database tools
+  like `get_day_context`. Use Gmail tools instead.
+
 CORE DIRECTIVES:
 1. SEMANTIC TRANSLATION:
    - "Book/Schedule" -> `schedule_event`
@@ -62,16 +85,25 @@ ERROR HANDLING:
 - If a tool fails, explain why briefly.""",
         )
 
-    async def on_enter(self):
+    async def on_enter(self, session: AgentSession):
+        # LiveKit Agents (voice) calls `on_enter(session)`; storing it makes
+        # it explicit and avoids signature mismatches across versions.
+        self.session = session
         logger.info("Agent joined room. Hydrating user session...")
 
         # 2. Find the human user to get their token
         user = None
-        # Iterate over remote participants to find the human
-        for p in self.room.remote_participants.values():
-            if p.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
-                user = p
+        # In practice, the agent can enter the room slightly before the user.
+        # Wait briefly so we can reliably pick up the user's Supabase token metadata.
+        for _ in range(50):  # ~10s total
+            # Iterate over remote participants to find the human
+            for p in self.room.remote_participants.values():
+                if p.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+                    user = p
+                    break
+            if user:
                 break
+            await asyncio.sleep(0.2)
 
         if not user:
             logger.warning("No user found in room yet. Waiting...")
@@ -92,21 +124,32 @@ ERROR HANDLING:
             user_token = user.metadata
 
         if user_token:
-            url = os.environ.get("SUPABASE_URL")
-            key = os.environ.get("SUPABASE_ANON_KEY")
+            # Repo convention: frontend uses NEXT_PUBLIC_SUPABASE_*.
+            # Backend expects SUPABASE_* but we fall back for convenience.
+            url = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+            key = os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 
-            # Create the client scoped to this user
-            self.supabase = create_client(
-                url,  # type: ignore
-                key,  # type: ignore
-                options=ClientOptions(
-                    headers={"Authorization": f"Bearer {user_token}"})
-            )
-            logger.info(
-                f"Supabase client authenticated for user {self.user_id}")
+            if not url or not key:
+                logger.error(
+                    "Supabase env vars missing. Set SUPABASE_URL + SUPABASE_ANON_KEY in backend/.env.local "
+                    "(or provide NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY). "
+                    "Calendar/task DB tools will be unavailable."
+                )
+                self.supabase = None  # type: ignore[assignment]
+            else:
+                # Create the client scoped to this user
+                self.supabase = create_client(
+                    url,  # type: ignore
+                    key,  # type: ignore
+                    options=ClientOptions(
+                        headers={"Authorization": f"Bearer {user_token}"})
+                )
+                logger.info(
+                    f"Supabase client authenticated for user {self.user_id}")
         else:
             logger.error(
                 "No Supabase token found in metadata. DB tools will fail.")
+            self.supabase = None  # type: ignore[assignment]
 
         # 4. Generate Greeting
         await self.session.generate_reply(
@@ -124,6 +167,11 @@ ERROR HANDLING:
         and get IDs for events/tasks.
         """
         logger.info(f"Fetching context for {date}")
+        if not getattr(self, "supabase", None):
+            return (
+                "System Alert: Calendar/task database is not configured for this session. "
+                "I can still help with other tools (like Gmail) if available."
+            )
         try:
             try:
                 dt_object = parser.parse(date)
@@ -360,6 +408,55 @@ server.setup_fnc = prewarm
 async def entrypoint(ctx: JobContext):
     agent = TetraAgent(ctx.room)
 
+    # Optional: connect this agent to Arcade's MCP Gateway so the LLM can call Gmail tools.
+    #
+    # Required env vars (backend/.env.local):
+    # - ARCADE_MCP_URL: e.g. https://api.arcade.dev/mcp/<YOUR_GATEWAY_SLUG>
+    # - ARCADE_API_KEY: used as Authorization: Bearer <key>
+    #
+    # User scoping:
+    # - Arcade stores OAuth tokens per `Arcade-User-ID`, so we pass a stable per-user value.
+    # - In this repo we name rooms like `room-${user.id}` (Supabase user id),
+    #   so we derive Arcade-User-ID from the room name.
+    arcade_mcp_url = os.environ.get("ARCADE_MCP_URL")
+    arcade_api_key = os.environ.get("ARCADE_API_KEY")
+
+    mcp_servers = []
+    if arcade_mcp_url and arcade_api_key:
+        arcade_user_id = ctx.room.name or ""
+        if arcade_user_id.startswith("room-"):
+            arcade_user_id = arcade_user_id.removeprefix("room-")
+
+        # Restrict to read-only Gmail tools so the voice agent can't send/modify email.
+        allowed_tools = [
+            "Gmail.WhoAmI",
+            "Gmail.ListEmails",
+            "Gmail.ListEmailsByHeader",
+            "Gmail.ListThreads",
+            "Gmail.SearchThreads",
+            "Gmail.GetThread",
+        ]
+
+        mcp_servers = [
+            MCPServerHTTP(
+                url=arcade_mcp_url,
+                # Arcade MCP Gateways support streamable HTTP; this avoids legacy SSE quirks.
+                transport_type="streamable_http",
+                allowed_tools=allowed_tools,
+                headers={
+                    "Authorization": f"Bearer {arcade_api_key}",
+                    # Arcade uses this header to scope OAuth tokens per application user.
+                    "Arcade-User-ID": arcade_user_id,
+                },
+                timeout=10,
+            )
+        ]
+    elif arcade_mcp_url or arcade_api_key:
+        # Partial config: log a hint rather than crashing the agent.
+        logger.warning(
+            "Arcade MCP is partially configured. Set BOTH ARCADE_MCP_URL and ARCADE_API_KEY to enable Gmail tools."
+        )
+
     session = AgentSession(
         stt=inference.STT(
             model="assemblyai/universal-streaming", language="en"),
@@ -372,6 +469,8 @@ async def entrypoint(ctx: JobContext):
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=True,
+        # Expose Arcade tools (like Gmail) via MCP to the LLM.
+        mcp_servers=mcp_servers,
     )
 
     logger.info("Starting session")

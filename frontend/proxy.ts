@@ -3,10 +3,10 @@ import { updateSession } from '@/lib/supabase/middleware';
 import { createServerClient } from '@supabase/ssr';
 
 /**
- * Middleware to protect API routes and refresh auth sessions.
+ * Proxy to protect API routes and refresh auth sessions.
  * Protects all /api/* routes by checking authentication.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // Update session (refresh tokens if needed) - this returns a response with updated cookies
   let response = await updateSession(request);
 
