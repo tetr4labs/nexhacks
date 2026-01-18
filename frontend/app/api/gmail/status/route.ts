@@ -102,8 +102,10 @@ export async function GET() {
         gmail_last_checked_at: new Date().toISOString(),
       })
       .eq("id", user.id)
-      .then(() => {})
-      .catch((err) => console.error("[gmail/status] Failed to update cache:", err));
+      .then(
+        () => {},
+        (err) => console.error("[gmail/status] Failed to update cache:", err)
+      );
 
     // Check if snooze is active
     const snoozedUntil = profile?.gmail_snoozed_until || null;
