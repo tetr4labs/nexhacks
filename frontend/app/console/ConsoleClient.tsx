@@ -2118,7 +2118,7 @@ function TasksList({
             <button
               type="button"
               aria-label={task.done ? "Mark task incomplete" : "Mark task complete"}
-              aria-pressed={task.done}
+              aria-pressed={task.done ?? false}
               onClick={(event) => {
                 event.stopPropagation();
                 onToggleDone(task);
