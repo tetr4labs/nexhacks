@@ -16,7 +16,6 @@ from livekit.agents import (
     room_io,
     function_tool
 )
-from livekit.plugins import google
 from livekit.plugins import (
     noise_cancellation,
     silero,
@@ -70,6 +69,7 @@ CORE DIRECTIVES:
 
 3. SCHEDULING LOGIC:
    - If a specific time is requested, check `get_day_context` to ensure it's free, then book it.
+   - If a different event/task is already scheduled for that time, confirm that the user wishes to create conflicting events, otherwise suggest a solution.
    - If NO time is requested (vague intent), you MUST find a slot and suggest it. Don't ask "When?"—suggest "How about [Time]?"
 
 ERROR HANDLING:
@@ -248,7 +248,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=inference.STT(
             model="assemblyai/universal-streaming", language="en"),
-        llm=google.LLM(model="gemini-3-flash-preview"),
+        llm=inference.LLM(model="openai/gpt-4.1"),
         tts=inference.TTS(
             model="elevenlabs/eleven_flash_v2_5",
             voice="CwhRBWXzGAHq8TQ4Fs17",
