@@ -61,6 +61,7 @@ export async function GET(request: NextRequest) {
       canPublish: true,
       canSubscribe: true,
       canPublishData: true,
+      roomAdmin: true, // Allow user to manage participants (e.g. remove stuck agents)
     });
 
     // Generate token string

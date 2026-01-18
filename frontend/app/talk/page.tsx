@@ -64,11 +64,48 @@ export default function TalkPage() {
         dynacast: true,
       });
 
+      // Helper to cleanup duplicate agents
+      const cleanupDuplicateAgents = async (currentRoom: Room) => {
+        const agents = Array.from(currentRoom.remoteParticipants.values())
+          .filter(p => p.identity === "agent" || p.identity.includes("agent") || p.identity === "Tetra");
+
+        if (agents.length > 1) {
+          console.log("Found multiple agents, cleaning up...", agents.map(a => a.identity));
+
+          // Sort by joinedAt (ascending: oldest first)
+          const sortedAgents = agents.sort((a, b) => {
+            const timeA = a.joinedAt?.getTime() || 0;
+            const timeB = b.joinedAt?.getTime() || 0;
+            return timeA - timeB;
+          });
+
+          // Keep the LAST one (newest). Remove all others.
+          const agentsToRemove = sortedAgents.slice(0, sortedAgents.length - 1);
+
+          for (const agent of agentsToRemove) {
+            console.log("Removing duplicate agent:", agent.identity);
+            try {
+              await fetch("/api/kick-participant", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ room: currentRoom.name, identity: agent.identity }),
+              });
+            } catch (err) {
+              console.error("Failed to remove agent:", err);
+            }
+          }
+        }
+      };
+
       // Set up event listeners
       newRoom.on(RoomEvent.Connected, () => {
         console.log("Connected to room:", newRoom.name);
         setIsConnected(true);
         setIsConnecting(false);
+
+        // Cleanup duplicates
+        cleanupDuplicateAgents(newRoom);
+
 
         // Log all participants
         const allParticipants = Array.from(newRoom.remoteParticipants.values());
@@ -108,6 +145,10 @@ export default function TalkPage() {
             participant.identity,
             participant,
           );
+
+          // Cleanup duplicates
+          cleanupDuplicateAgents(newRoom);
+
           setParticipants((prev) => {
             const updated = [...prev, participant.identity];
             // Clear error and waiting state once agent is detected
