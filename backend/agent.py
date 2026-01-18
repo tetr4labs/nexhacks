@@ -30,56 +30,45 @@ load_dotenv(".env.local")
 
 
 class TetraAgent(Agent):
-    def __init__(self):
+    def __init__(self, supabase_client: Client, user_id: str):
         now = datetime.now()
-        # Added "Standard Time" to help LLM understand it's a specific zone
         time_context = now.strftime("%A, %B %d, %Y at %I:%M %p %Z")
+
+        self.supabase = supabase_client
+        self.user_id = user_id  # Store UUID for "owner" field in inserts
 
         super().__init__(
             instructions=f"""\
 SYSTEM IDENTITY:
-You are TETRA, a proactive personal productivity partner. You are not a robot; you are a supportive engine designed to turn my goals into reality.
+You are TETRA, a proactive personal productivity partner.
 Your goal is to bridge the gap between "I want to" and "I'm doing it."
 
 OPERATIONAL PARAMETERS:
 - SYSTEM TIME: {time_context}.
-- TONE: Casual, American, and conversational. Think "capable friend," not "military commander."
-- TIME FORMAT: STRICTLY 12-hour clock with AM/PM (e.g., "2 pm", "11:30 am"). NEVER use military time (14:00).
-- DATE FORMAT: Natural and relative (e.g., "tomorrow afternoon," "this coming Tuesday").
+- TONE: Casual, American, and conversational.
+- TIME FORMAT: 12-hour clock (2 pm).
+- DATE FORMAT: Natural/Relative.
 
 CORE DIRECTIVES:
-1. SEMANTIC TRANSLATION (The "Yes" Filter):
-   - Interpret verbs loosely. If the user implies action ("Create," "Book," "Time for," "I'm gonna"), map it to the `schedule` tool.
-   - If the user implies memory ("Remind me," "Don't let me forget"), map it to the `task` tool.
+1. SEMANTIC TRANSLATION:
+   - "Book/Schedule" -> `schedule_event`
+   - "Remind me/Task" -> `create_task`
+   - "Change/Move/Reschedule" -> `update_event` or `update_task`
+   - "Cancel/Delete" -> `delete_event` or `delete_task`
 
 2. ASPIRATION TO ACTION:
-   - If the user states a vague goal or aspiration (e.g., "I want to hit the gym regularly," "I need to read more"), DO NOT just acknowledge it.
-   - ACTION: Immediately call `get_day_context` to find the next logical opening (check tomorrow first).
-   - RESPONSE: Propose a concrete event based on that opening.
-     - Example: "I love that goal. You've got an opening tomorrow at 5:30 pm—want me to lock in a 'Gym Session' for you then?"
+   - If the user implies a goal, check `get_day_context` and propose a time.
 
-3. SCHEDULING LOGIC:
-   - If a specific time is requested, check `get_day_context` to ensure it's free, then book it.
-   - If a different event/task is already scheduled for that time, confirm that the user wishes to create conflicting events, otherwise suggest a solution.
-   - If NO time is requested (vague intent), you MUST find a slot and suggest it. Don't ask "When?"—suggest "How about [Time]?"
+3. CONFLICT HANDLING:
+   - Check `get_day_context` before booking.
+   - If updating an event, confirm the new details are correct.
 
 ERROR HANDLING:
-- If a tool fails, keep it casual: "Whoops, hit a snag on my end: [Reason].""",
-            #  mcp_servers=[
-            #     mcp.MCPServerHTTP(
-            #         url="https://example.com/mcp",
-            #     ),
-            # ],
+- If a tool fails, explain why briefly.""",
         )
 
-        url = os.environ.get("SUPABASE_URL")
-        key = os.environ.get("SUPABASE_ANON_KEY")
-
-        self.supabase: Client = create_client(url, key)  # type: ignore
-
-    async def on_enter(self):
-        # Cyberpunk intro - short and active
-        await self.session.generate_reply(
+    async def on_enter(self, session: AgentSession):
+        await session.generate_reply(
             instructions="Greet the user and offer your assistance.",
             allow_interruptions=True,
         )
@@ -87,20 +76,18 @@ ERROR HANDLING:
     @function_tool()
     async def get_day_context(
         self,
-        date: Annotated[str,
-                        "The target date. Can be YYYY-MM-DD or a full ISO timestamp."]
+        date: Annotated[str, "The target date. YYYY-MM-DD."]
     ):
         """
-        CRITICAL: Call this BEFORE scheduling anything to check availability. 
-        Gets the user's schedule, tasks, and commitments for a specific date range.
+        CRITICAL: Call this BEFORE scheduling or updating to check availability 
+        and get IDs for events/tasks.
         """
         logger.info(f"Fetching context for {date}")
         try:
-            # ROBUST PARSING (From previous step)
             try:
                 dt_object = parser.parse(date)
             except parser.ParserError:
-                return f"Error: Invalid date format '{date}'. Retry with YYYY-MM-DD."
+                return f"Error: Invalid date format '{date}'."
 
             day_str = dt_object.strftime("%Y-%m-%d")
             start_filter = f"{day_str}T00:00:00"
@@ -124,8 +111,6 @@ ERROR HANDLING:
             )
             tasks = tasks_response.data
 
-            # FORMATTING FOR LLM CONSUMPTION
-            # We use a very strict format so the LLM parses it easily
             context_str = f"## STATUS REPORT FOR {day_str}\n"
 
             if not events:
@@ -135,10 +120,10 @@ ERROR HANDLING:
                 for e in events:
                     start_str = e["start"].replace('Z', '+00:00')
                     dt = datetime.fromisoformat(start_str)
-                    # 24hr format is better for bots
                     time_str = dt.strftime("%H:%M")
                     name = e.get("name", "Untitled")
-                    context_str += f"- {time_str}: {name}\n"
+                    # ADDED ID HERE so the LLM can reference it for updates
+                    context_str += f"- {time_str}: {name} (ID: {e['id']})\n"
 
             context_str += "\n[INTENT LEDGER / TASKS]:\n"
             if not tasks:
@@ -152,21 +137,20 @@ ERROR HANDLING:
             return context_str
 
         except Exception as e:
-            logger.error(f"Error in get_day_context: {e}")
             return f"System Alert: Database connection failed. Details: {str(e)}"
+
+    # --- EVENT TOOLS ---
 
     @function_tool()
     async def schedule_event(
         self,
         title: Annotated[str, "Title of the event"],
-        start_iso: Annotated[str, "Start time in ISO 8601 format (e.g. 2023-10-27T14:00:00)"],
+        start_iso: Annotated[str, "Start time in ISO 8601"],
         duration_minutes: Annotated[int, "Duration in minutes"] = 60,
-        notes: Annotated[Optional[str], "Optional description or notes"] = None
+        notes: Annotated[Optional[str], "Optional notes"] = None
     ):
-        """
-        Schedule a new calendar event.
-        """
-        logger.info(f"Scheduling: {title} at {start_iso}")
+        """Schedule a new calendar event."""
+        logger.info(f"Scheduling: {title}")
         try:
             start_dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
             end_dt = start_dt + timedelta(minutes=duration_minutes)
@@ -175,32 +159,99 @@ ERROR HANDLING:
                 "name": title,
                 "start": start_iso,
                 "end": end_dt.isoformat(),
-                "description": notes or ""
+                "description": notes or "",
+                "owner": self.user_id  # Explicitly set owner to satisfy RLS
             }
 
             self.supabase.table("events").insert(data).execute()
             return f"Confirmed. Scheduled '{title}' for {start_dt.strftime('%H:%M')}."
-
         except Exception as e:
-            logger.error(f"Error scheduling: {e}")
-            return f"Failed to schedule event. System reported: {str(e)}"
+            return f"Failed to schedule: {str(e)}"
+
+    @function_tool()
+    async def update_event(
+        self,
+        event_id: Annotated[int, "The ID of the event to update"],
+        title: Annotated[Optional[str], "New title"] = None,
+        start_iso: Annotated[Optional[str], "New start time ISO 8601"] = None,
+        duration_minutes: Annotated[Optional[int], "New duration"] = None,
+        notes: Annotated[Optional[str], "New notes"] = None
+    ):
+        """Update an existing event. Only provide fields that need changing."""
+        logger.info(f"Updating event {event_id}")
+        try:
+            updates = {}
+            if title:
+                updates["name"] = title
+            if notes:
+                updates["description"] = notes
+
+            # Handle time logic if start or duration changes
+            if start_iso or duration_minutes:
+                # We need to fetch the current event to calculate end time correctly
+                # if only one of the two variables is provided.
+                curr = self.supabase.table("events").select(
+                    "*").eq("id", event_id).execute()
+                if not curr.data:
+                    return "Event not found."
+
+                current_event = curr.data[0]
+
+                # Determine base start time
+                new_start = start_iso if start_iso else current_event["start"]
+                start_dt = datetime.fromisoformat(
+                    new_start.replace('Z', '+00:00'))
+
+                # Determine duration
+                if duration_minutes:
+                    minutes = duration_minutes
+                else:
+                    # Calculate previous duration
+                    old_start = datetime.fromisoformat(
+                        current_event["start"].replace('Z', '+00:00'))
+                    old_end = datetime.fromisoformat(
+                        current_event["end"].replace('Z', '+00:00'))
+                    minutes = (old_end - old_start).total_seconds() / 60
+
+                end_dt = start_dt + timedelta(minutes=minutes)
+
+                updates["start"] = new_start
+                updates["end"] = end_dt.isoformat()
+
+            self.supabase.table("events").update(
+                updates).eq("id", event_id).execute()
+            return f"Event {event_id} updated successfully."
+        except Exception as e:
+            return f"Error updating event: {str(e)}"
+
+    @function_tool()
+    async def delete_event(
+        self,
+        event_id: Annotated[int, "The ID of the event to delete"]
+    ):
+        """Remove an event from the calendar."""
+        logger.info(f"Deleting event {event_id}")
+        try:
+            self.supabase.table("events").delete().eq("id", event_id).execute()
+            return "Event deleted."
+        except Exception as e:
+            return f"Error deleting event: {str(e)}"
+
+    # --- TASK TOOLS ---
 
     @function_tool()
     async def create_task(
         self,
-        name: Annotated[str, "The content of the task/commitment"],
-        due_iso: Annotated[Optional[str],
-                           "Optional due date/time in ISO 8601"] = None
+        name: Annotated[str, "The content of the task"],
+        due_iso: Annotated[Optional[str], "Optional due date ISO"] = None
     ):
-        """
-        Log a new task or commitment.
-        """
-        logger.info(f"Creating task: {name}")
+        """Log a new task."""
         try:
             data = {
                 "name": name,
                 "done": False,
-                "due": due_iso
+                "due": due_iso,
+                "owner": self.user_id  # Explicitly set owner
             }
             self.supabase.table("tasks").insert(data).execute()
             return f"Commitment logged: {name}"
@@ -208,14 +259,44 @@ ERROR HANDLING:
             return f"Error logging commitment: {str(e)}"
 
     @function_tool()
+    async def update_task(
+        self,
+        task_id: Annotated[int, "The ID of the task"],
+        name: Annotated[Optional[str], "New name"] = None,
+        due_iso: Annotated[Optional[str], "New due date"] = None
+    ):
+        """Update a task's details."""
+        try:
+            updates = {}
+            if name:
+                updates["name"] = name
+            if due_iso:
+                updates["due"] = due_iso
+
+            self.supabase.table("tasks").update(
+                updates).eq("id", task_id).execute()
+            return "Task updated."
+        except Exception as e:
+            return f"Error updating task: {str(e)}"
+
+    @function_tool()
+    async def delete_task(
+        self,
+        task_id: Annotated[int, "The ID of the task"]
+    ):
+        """Permanently delete a task."""
+        try:
+            self.supabase.table("tasks").delete().eq("id", task_id).execute()
+            return "Task deleted."
+        except Exception as e:
+            return f"Error deleting task: {str(e)}"
+
+    @function_tool()
     async def mark_task_done(
         self,
         task_id: Annotated[int, "The numerical ID of the task"]
     ):
-        """
-        Mark a task or commitment as complete.
-        """
-        logger.info(f"Completing task ID: {task_id}")
+        """Mark a task as complete."""
         try:
             self.supabase.table("tasks").update(
                 {"done": True}).eq("id", task_id).execute()
@@ -241,6 +322,7 @@ async def entrypoint(ctx: JobContext):
     logger.info("Waiting for participant...")
     participant = await ctx.wait_for_participant()
 
+    # 1. Get Token for Supabase Client
     user_token = ""
     try:
         user_token = participant.metadata.get("supabase_token")
@@ -248,7 +330,6 @@ async def entrypoint(ctx: JobContext):
         pass
 
     if not user_token:
-        # If the metadata is just a raw string (sometimes happens), try parsing it
         try:
             meta_dict = json.loads(participant.metadata)
             user_token = meta_dict.get("supabase_token")
@@ -256,21 +337,24 @@ async def entrypoint(ctx: JobContext):
             pass
 
     if not user_token:
-        logger.error("No Supabase token found in participant metadata.")
-        # Decide here if you want to disconnect or proceed with restricted access.
-        # For now, we proceed but DB calls might fail if RLS is strict.
+        logger.error("No Supabase token found. DB access will fail.")
+
+    # 2. Get User ID (Identity) for "owner" field in RLS
+    # In your Token generator: identity: user.id
+    user_id = participant.identity
 
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_ANON_KEY")
 
-    # CHANGED: Initialize client with specific user headers
-    # This ensures Postgres RLS sees the request as coming from this specific User ID
     client_options = ClientOptions(
         headers={"Authorization": f"Bearer {user_token}"}
     )
 
     authenticated_client = create_client(
-        url, key, options=client_options)  # type: ignore
+        url, key, options=client_options)
+
+    # Pass both client AND user_id to the agent
+    agent = TetraAgent(supabase_client=authenticated_client, user_id=user_id)
 
     session = AgentSession(
         stt=inference.STT(
@@ -285,8 +369,6 @@ async def entrypoint(ctx: JobContext):
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=True,
     )
-
-    agent = TetraAgent()
 
     logger.info("Starting session")
 

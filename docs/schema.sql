@@ -153,4 +153,11 @@ ALTER TABLE public.events
 ALTER TABLE public.tasks 
   DROP CONSTRAINT tasks_owner_fkey,
   ADD CONSTRAINT tasks_owner_fkey FOREIGN KEY (owner) REFERENCES auth.users(id);
-  
+
+ALTER TABLE public.events 
+ALTER COLUMN owner 
+SET DEFAULT auth.uid();
+
+ALTER TABLE public.tasks 
+ALTER COLUMN owner 
+SET DEFAULT auth.uid();
