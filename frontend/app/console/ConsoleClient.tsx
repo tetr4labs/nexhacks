@@ -12,7 +12,7 @@
  * which also expands the transcript panel on the right side.
  */
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   Room,
   RoomEvent,
@@ -27,6 +27,8 @@ import ImportButton from "./ImportButton";
 import EventCard from "./EventCard";
 import DayNavigator from "./DayNavigator";
 import TimezoneDisplay from "./TimezoneDisplay";
+import TaskModal from "./TaskModal";
+import { createClient } from "@/lib/supabase/client";
 
 // =============================================
 // Type definitions for props passed from server
@@ -71,6 +73,147 @@ export default function ConsoleClient({
   dayTasks,
   profileTimezone,
 }: ConsoleClientProps) {
+  const supabase = useMemo(() => createClient(), []);
+
+  const [tasks, setTasks] = useState<Task[]>(dayTasks);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [taskModalMode, setTaskModalMode] = useState<"create" | "edit">("create");
+  const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [isTaskSaving, setIsTaskSaving] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTasks(dayTasks);
+    setIsTaskModalOpen(false);
+    setActiveTask(null);
+    setTaskError(null);
+    setIsTaskSaving(false);
+    setTaskModalMode("create");
+  }, [dayTasks, selectedDayString]);
+
+  const getUserId = useCallback(async () => {
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user) {
+      throw new Error("Unable to load user session.");
+    }
+    return data.user.id;
+  }, [supabase]);
+
+  const openCreateTaskModal = useCallback(() => {
+    setTaskError(null);
+    setTaskModalMode("create");
+    setActiveTask(null);
+    setIsTaskModalOpen(true);
+  }, []);
+
+  const openEditTaskModal = useCallback((task: Task) => {
+    setTaskError(null);
+    setTaskModalMode("edit");
+    setActiveTask(task);
+    setIsTaskModalOpen(true);
+  }, []);
+
+  const closeTaskModal = useCallback(() => {
+    if (isTaskSaving) return;
+    setIsTaskModalOpen(false);
+    setActiveTask(null);
+    setTaskError(null);
+  }, [isTaskSaving]);
+
+  const sortTasks = useCallback((list: Task[]) => {
+    return [...list].sort((a, b) => {
+      if (!a.due && !b.due) return a.id - b.id;
+      if (!a.due) return 1;
+      if (!b.due) return -1;
+      const aTime = new Date(a.due).getTime();
+      const bTime = new Date(b.due).getTime();
+      if (aTime === bTime) return a.id - b.id;
+      return aTime - bTime;
+    });
+  }, []);
+
+  const handleSaveTask = useCallback(
+    async (payload: { name: string; description: string; due: string | null }) => {
+      setIsTaskSaving(true);
+      setTaskError(null);
+      try {
+        const userId = await getUserId();
+
+        if (taskModalMode === "create") {
+          const { data, error } = await supabase
+            .from("tasks")
+            .insert({
+              owner: userId,
+              name: payload.name,
+              description: payload.description,
+              due: payload.due,
+            })
+            .select("id, name, description, due, done")
+            .single();
+
+          if (error) throw error;
+          if (data) {
+            setTasks((prev) => sortTasks([...prev, data as Task]));
+          }
+        } else if (activeTask) {
+          const { data, error } = await supabase
+            .from("tasks")
+            .update({
+              name: payload.name,
+              description: payload.description,
+              due: payload.due,
+            })
+            .eq("id", activeTask.id)
+            .eq("owner", userId)
+            .select("id, name, description, due, done")
+            .single();
+
+          if (error) throw error;
+          if (data) {
+            setTasks((prev) =>
+              sortTasks(
+                prev.map((task) =>
+                  task.id === activeTask.id ? (data as Task) : task,
+                ),
+              ),
+            );
+          }
+        }
+
+        setIsTaskModalOpen(false);
+        setActiveTask(null);
+      } catch (err) {
+        setTaskError(err instanceof Error ? err.message : "Failed to save task.");
+      } finally {
+        setIsTaskSaving(false);
+      }
+    },
+    [activeTask, getUserId, sortTasks, supabase, taskModalMode],
+  );
+
+  const handleDeleteTask = useCallback(async () => {
+    if (!activeTask) return;
+    setIsTaskSaving(true);
+    setTaskError(null);
+    try {
+      const userId = await getUserId();
+      const { error } = await supabase
+        .from("tasks")
+        .delete()
+        .eq("id", activeTask.id)
+        .eq("owner", userId);
+
+      if (error) throw error;
+
+      setTasks((prev) => prev.filter((task) => task.id !== activeTask.id));
+      setIsTaskModalOpen(false);
+      setActiveTask(null);
+    } catch (err) {
+      setTaskError(err instanceof Error ? err.message : "Failed to delete task.");
+    } finally {
+      setIsTaskSaving(false);
+    }
+  }, [activeTask, getUserId, supabase]);
   // =============================================
   // Transcript/Voice panel state
   // =============================================
@@ -797,7 +940,7 @@ export default function ConsoleClient({
             </span>
             <span className="opacity-50">|</span>
             <span className="opacity-80">
-              {events?.length || 0} EVENTS • {dayTasks.length} TASKS
+              {events?.length || 0} EVENTS • {tasks.length} TASKS
             </span>
           </div>
         </div>
@@ -839,10 +982,18 @@ export default function ConsoleClient({
             <div className="flex flex-col gap-8 min-h-0">
               {/* Tasks Panel */}
               <div className="glass-panel p-8 flex-1 border-2 border-white min-h-0">
-                <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white mb-6">
-                  TASKS
-                </h2>
-                <TasksList tasks={dayTasks} />
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white">
+                    TASKS
+                  </h2>
+                  <button
+                    onClick={openCreateTaskModal}
+                    className="btn-neon-secondary text-xs px-4 py-2"
+                  >
+                    ADD TASK
+                  </button>
+                </div>
+                <TasksList tasks={tasks} onEditTask={openEditTaskModal} />
               </div>
 
               {/* System Feed Panel - kept under tasks as requested */}
@@ -1018,6 +1169,18 @@ export default function ConsoleClient({
         playsInline
         style={{ display: "none" }}
       />
+
+      <TaskModal
+        isOpen={isTaskModalOpen}
+        mode={taskModalMode}
+        task={activeTask}
+        selectedDayString={selectedDayString}
+        onClose={closeTaskModal}
+        onSave={handleSaveTask}
+        onDelete={handleDeleteTask}
+        isSaving={isTaskSaving}
+        errorMessage={taskError}
+      />
     </div>
   );
 }
@@ -1136,13 +1299,19 @@ function CurrentTimeIndicator() {
 // Tasks list component (moved from page.tsx)
 // =============================================
 
-function TasksList({ tasks }: { tasks: Task[] }) {
+function TasksList({
+  tasks,
+  onEditTask,
+}: {
+  tasks: Task[];
+  onEditTask: (task: Task) => void;
+}) {
   if (tasks.length === 0) {
     return (
       <div className="text-center py-8">
         <p className="text-white font-mono text-sm opacity-80">NO TASKS FOR TODAY</p>
         <p className="text-white text-xs mt-2 opacity-60">
-          ADD TASKS WITH VOICE COMMANDS
+          ADD TASKS WITH VOICE OR MANUALLY
         </p>
       </div>
     );
@@ -1153,11 +1322,12 @@ function TasksList({ tasks }: { tasks: Task[] }) {
       {tasks.map((task) => (
         <div
           key={task.id}
-          className={`p-4 border-2 transition-colors cursor-pointer ${
+          className={`group p-4 border-2 transition-colors cursor-pointer ${
             task.done
               ? "border-white/20 bg-black/40 opacity-60"
               : "border-white/40 bg-black/20 hover:bg-white/5"
           }`}
+          onClick={() => onEditTask(task)}
         >
           <div className="flex items-start gap-3">
             <div
@@ -1208,6 +1378,16 @@ function TasksList({ tasks }: { tasks: Task[] }) {
                 </p>
               )}
             </div>
+
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onEditTask(task);
+              }}
+              className="text-xs font-mono uppercase tracking-[0.2em] text-white/60 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              EDIT
+            </button>
           </div>
         </div>
       ))}
