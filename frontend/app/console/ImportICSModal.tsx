@@ -126,18 +126,18 @@ export default function ImportICSModal({ isOpen, onClose }: ImportICSModalProps)
   return (
     // Modal backdrop with blur effect
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
       onClick={handleClose}
     >
       {/* Modal content - stop propagation to prevent closing when clicking inside */}
       <div 
-        className="relative w-full max-w-md mx-4 glass-panel p-6 animate-fade-in"
+        className="relative w-full max-w-md mx-4 glass-panel p-6 border-2 border-white animate-fade-in"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close button */}
         <button
           onClick={handleClose}
-          className="absolute top-4 right-4 text-zinc-500 hover:text-[#00ffff] transition-colors"
+          className="absolute top-4 right-4 text-white/60 hover:text-white transition-colors"
           aria-label="Close modal"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -147,22 +147,22 @@ export default function ImportICSModal({ isOpen, onClose }: ImportICSModalProps)
 
         {/* Modal header */}
         <div className="mb-6">
-          <h2 className="font-mono text-lg font-bold text-[#00ffff] uppercase tracking-wider">
-            Import Calendar
+          <h2 className="font-mono text-lg font-bold text-white uppercase tracking-[0.2em]">
+            IMPORT CALENDAR
           </h2>
-          <p className="text-sm text-zinc-500 mt-1">
-            Upload an .ics file to import events (next 30 days)
+          <p className="text-xs text-white/60 mt-2 font-mono uppercase tracking-[0.15em]">
+            Upload an .ics file to import events
           </p>
         </div>
 
         {/* Drop zone */}
         <div
           className={`
-            relative border-2 border-dashed rounded-lg p-8 text-center cursor-pointer
+            relative border-2 border-dashed p-8 text-center cursor-pointer
             transition-all duration-200 mb-4
             ${isDragging 
-              ? "border-[#00ffff] bg-[#00ffff]/10" 
-              : "border-zinc-700 hover:border-zinc-600 bg-zinc-900/50"
+              ? "border-white bg-white/5" 
+              : "border-white/30 hover:border-white/60 bg-black/40"
             }
           `}
           onDragOver={handleDragOver}
@@ -183,30 +183,30 @@ export default function ImportICSModal({ isOpen, onClose }: ImportICSModalProps)
           {selectedFile ? (
             // Show selected file info
             <div className="space-y-2">
-              <div className="w-12 h-12 mx-auto rounded-full bg-[#00ffff]/20 flex items-center justify-center">
-                <svg className="w-6 h-6 text-[#00ffff]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-12 h-12 mx-auto border-2 border-white/40 flex items-center justify-center">
+                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <p className="font-mono text-sm text-[#00ffff]">{selectedFile.name}</p>
-              <p className="text-xs text-zinc-500">
+              <p className="font-mono text-sm text-white uppercase tracking-[0.15em]">{selectedFile.name}</p>
+              <p className="text-xs text-white/60 font-mono uppercase tracking-[0.2em]">
                 {(selectedFile.size / 1024).toFixed(1)} KB
               </p>
             </div>
           ) : (
             // Show upload prompt
             <div className="space-y-3">
-              <div className="w-12 h-12 mx-auto rounded-full bg-zinc-800 flex items-center justify-center">
-                <svg className="w-6 h-6 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-12 h-12 mx-auto border-2 border-white/20 flex items-center justify-center">
+                <svg className="w-6 h-6 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
               </div>
               <div>
-                <p className="font-mono text-sm text-zinc-400">
-                  Drop .ics file here or <span className="text-[#00ffff]">browse</span>
+                <p className="font-mono text-xs text-white uppercase tracking-[0.2em]">
+                  Drop .ics file here or <span className="text-white/60">browse</span>
                 </p>
-                <p className="text-xs text-zinc-600 mt-1">
-                  Supports iCalendar format (.ics)
+                <p className="text-xs text-white/50 mt-2 font-mono uppercase tracking-[0.2em]">
+                  Supports iCalendar format
                 </p>
               </div>
             </div>
@@ -217,10 +217,10 @@ export default function ImportICSModal({ isOpen, onClose }: ImportICSModalProps)
         {result && (
           <div 
             className={`
-              p-3 rounded border mb-4 font-mono text-sm
+              p-3 border-2 mb-4 font-mono text-xs uppercase tracking-[0.2em]
               ${result.success 
-                ? "border-[#22c55e]/30 bg-[#22c55e]/10 text-[#22c55e]" 
-                : "border-[#ef4444]/30 bg-[#ef4444]/10 text-[#ef4444]"
+                ? "border-green-500/50 bg-green-500/10 text-green-400" 
+                : "border-red-500/50 bg-red-500/10 text-red-400"
               }
             `}
           >
@@ -232,17 +232,17 @@ export default function ImportICSModal({ isOpen, onClose }: ImportICSModalProps)
         <div className="flex gap-3">
           <button
             onClick={handleClose}
-            className="flex-1 px-4 py-2.5 rounded border border-zinc-700 text-zinc-400 font-mono text-sm uppercase tracking-wider hover:bg-zinc-800 transition-colors"
+            className="flex-1 btn-neon-secondary text-xs px-4 py-2.5"
           >
             Cancel
           </button>
           <button
             onClick={handleUpload}
             disabled={!selectedFile || isUploading}
-            className="flex-1 btn-neon-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 btn-neon-primary text-xs disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isUploading ? (
-              <span className="flex items-center justify-center gap-2">
+              <span className="flex items-center justify-center gap-2 text-xs">
                 <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />

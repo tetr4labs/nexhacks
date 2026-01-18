@@ -11,6 +11,9 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 LIVEKIT_URL=your_livekit_url
 LIVEKIT_API_KEY=your_livekit_api_key
 LIVEKIT_API_SECRET=your_livekit_api_secret
+
+# Optional: For Gmail integration (required for /api/gmail/* routes)
+ARCADE_API_KEY=your_arcade_api_key
 ```
 
 ### LiveKit Agent Environment Variables
@@ -65,5 +68,41 @@ The agent will automatically join the room when you connect.
    - “List my 5 most recent emails.”
    - “Search my email for ‘invoice’ and summarize the top results.”
 
-If Gmail isn’t authorized yet for that user, Arcade will return an authorization step (OAuth). Complete
-the Google consent flow for the requested scopes, then retry the request.
+If Gmail isn’t authorized yet for that user, Arcade will return an authorization step (OAuth).
+In the web UI, open the **Transcript** panel and click the authorization URL to complete the Google
+consent flow, then retry the request.
+
+Note: Arcade persists OAuth tokens keyed by `Arcade-User-ID`. In this repo, the voice agent sets
+`Arcade-User-ID` to your Supabase user id (derived from the LiveKit room name `room-${user.id}`), so
+authorization persists across sessions for the same signed-in user.
+
+## Arcade Gmail (SDK) quick test: read/search email from the backend
+
+If you want to sanity-check your Arcade Gmail authorization outside of LiveKit/MCP, you can run:
+
+```bash
+cd backend
+
+# Required
+export ARCADE_API_KEY="..."
+
+# Optional but recommended: keep a stable user id so OAuth tokens are reused
+export ARCADE_USER_ID="you@example.com"
+
+# Verify identity
+uv run read_gmail.py whoami
+
+# List most recent emails
+uv run read_gmail.py list --n 5
+
+# Search by headers (basic filters)
+uv run read_gmail.py search-headers --sender "no-reply@" --limit 10
+uv run read_gmail.py search-headers --subject "invoice" --limit 10
+```
+
+MCP gmail console test:
+```bash
+uv run read_gmail.py whoami
+# or:
+uv run read_gmail.py list --n 5
+```

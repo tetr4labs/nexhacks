@@ -27,7 +27,17 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
     
     -- Timestamps
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    
+    -- Gmail integration (Arcade MCP)
+    -- Snooze: if set and in the future, UI won't prompt and agent won't attempt Gmail tools
+    gmail_snoozed_until TIMESTAMPTZ NULL,
+    -- Cached connection status from Arcade (authoritative source is Arcade API)
+    gmail_connected BOOLEAN NOT NULL DEFAULT false,
+    -- Token status from Arcade: 'not_started' | 'pending' | 'completed' | 'failed'
+    gmail_token_status TEXT NULL,
+    -- When we last checked Arcade for Gmail auth status
+    gmail_last_checked_at TIMESTAMPTZ NULL
 );
 
 -- Create index for faster handle lookups
@@ -161,3 +171,22 @@ SET DEFAULT auth.uid();
 ALTER TABLE public.tasks 
 ALTER COLUMN owner 
 SET DEFAULT auth.uid();
+
+-- =============================================
+-- Gmail Integration Fields (for Arcade MCP)
+-- =============================================
+-- These fields track user's Gmail connection state and snooze preferences.
+-- Arcade stores the actual OAuth tokens; we cache status + respect snooze here.
+
+-- Add Gmail integration columns to user_profiles
+-- Run this migration on existing databases:
+/*
+ALTER TABLE public.user_profiles 
+  ADD COLUMN IF NOT EXISTS gmail_snoozed_until TIMESTAMPTZ NULL,
+  ADD COLUMN IF NOT EXISTS gmail_connected BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS gmail_token_status TEXT NULL,
+  ADD COLUMN IF NOT EXISTS gmail_last_checked_at TIMESTAMPTZ NULL;
+*/
+
+-- For new installations, these columns are included in the CREATE TABLE above.
+-- If you're adding to an existing database, run the ALTER TABLE statement above.

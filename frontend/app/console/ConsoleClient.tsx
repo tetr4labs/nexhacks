@@ -2,12 +2,12 @@
 
 /**
  * ConsoleClient.tsx
- * 
+ *
  * This is the main client-side wrapper for the /console page.
  * We split this from the server component (page.tsx) because:
  * - Server components handle auth + data fetching (Supabase queries)
  * - Client components handle interactivity (LiveKit connection, UI state, audio playback)
- * 
+ *
  * The tetrahedron CTA in the header starts the voice connection when clicked,
  * which also expands the transcript panel on the right side.
  */
@@ -79,30 +79,38 @@ export default function ConsoleClient({
   const [tasks, setTasks] = useState<Task[]>(dayTasks);
   const [localEvents, setLocalEvents] = useState<Event[]>(events || []);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-  const [taskModalMode, setTaskModalMode] = useState<"create" | "edit">("create");
+  const [taskModalMode, setTaskModalMode] = useState<"create" | "edit">(
+    "create",
+  );
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [isTaskSaving, setIsTaskSaving] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
 
   // Helper to check if a task belongs to the selected day
-  const isTaskInSelectedDay = useCallback((task: Task) => {
-    if (!task.due) return true; // Include tasks with no due date
-    const dueDate = new Date(task.due);
-    const endOfDay = new Date(selectedDay);
-    endOfDay.setHours(23, 59, 59, 999);
-    return dueDate <= endOfDay;
-  }, [selectedDay]);
+  const isTaskInSelectedDay = useCallback(
+    (task: Task) => {
+      if (!task.due) return true; // Include tasks with no due date
+      const dueDate = new Date(task.due);
+      const endOfDay = new Date(selectedDay);
+      endOfDay.setHours(23, 59, 59, 999);
+      return dueDate <= endOfDay;
+    },
+    [selectedDay],
+  );
 
   // Helper to check if an event belongs to the selected day
-  const isEventInSelectedDay = useCallback((event: Event) => {
-    if (!event.start) return false;
-    const startOfDay = new Date(selectedDay);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(selectedDay);
-    endOfDay.setHours(23, 59, 59, 999);
-    const eventStart = new Date(event.start);
-    return eventStart >= startOfDay && eventStart < endOfDay;
-  }, [selectedDay]);
+  const isEventInSelectedDay = useCallback(
+    (event: Event) => {
+      if (!event.start) return false;
+      const startOfDay = new Date(selectedDay);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(selectedDay);
+      endOfDay.setHours(23, 59, 59, 999);
+      const eventStart = new Date(event.start);
+      return eventStart >= startOfDay && eventStart < endOfDay;
+    },
+    [selectedDay],
+  );
 
   // Ref to track selected day for LiveKit handlers (which are closed over)
   const selectedDayRef = useRef(selectedDay);
@@ -154,9 +162,13 @@ export default function ConsoleClient({
     const setupSubscriptions = async () => {
       try {
         // Get current user ID
-        const { data: userData, error: userError } = await supabase.auth.getUser();
+        const { data: userData, error: userError } =
+          await supabase.auth.getUser();
         if (userError || !userData.user) {
-          console.error("Failed to get user for Realtime subscriptions:", userError);
+          console.error(
+            "Failed to get user for Realtime subscriptions:",
+            userError,
+          );
           return;
         }
         userId = userData.user.id;
@@ -189,7 +201,9 @@ export default function ConsoleClient({
               } else if (payload.eventType === "UPDATE") {
                 const updatedTask = payload.new as Task;
                 setTasks((prev) => {
-                  const existingIndex = prev.findIndex((t) => String(t.id) === String(updatedTask.id));
+                  const existingIndex = prev.findIndex(
+                    (t) => String(t.id) === String(updatedTask.id),
+                  );
                   if (existingIndex >= 0) {
                     // Task exists - update it if it's still in the selected day, otherwise remove it
                     if (isTaskInSelectedDay(updatedTask)) {
@@ -198,7 +212,9 @@ export default function ConsoleClient({
                       return sortTasks(updated);
                     } else {
                       // Task moved out of selected day - remove it
-                      return prev.filter((t) => String(t.id) !== String(updatedTask.id));
+                      return prev.filter(
+                        (t) => String(t.id) !== String(updatedTask.id),
+                      );
                     }
                   } else {
                     // Task doesn't exist in current list - add it if it belongs to selected day
@@ -211,9 +227,11 @@ export default function ConsoleClient({
               } else if (payload.eventType === "DELETE") {
                 const deletedTask = payload.old as Partial<Task>;
                 console.log("Delete task payload:", deletedTask);
-                setTasks((prev) => prev.filter((t) => String(t.id) !== String(deletedTask.id)));
+                setTasks((prev) =>
+                  prev.filter((t) => String(t.id) !== String(deletedTask.id)),
+                );
               }
-            }
+            },
           )
           .subscribe((status) => {
             console.log("Tasks subscription status:", status);
@@ -244,14 +262,19 @@ export default function ConsoleClient({
                     // Sort by start time
                     return [...prev, newEvent].sort((a, b) => {
                       if (!a.start || !b.start) return 0;
-                      return new Date(a.start).getTime() - new Date(b.start).getTime();
+                      return (
+                        new Date(a.start).getTime() -
+                        new Date(b.start).getTime()
+                      );
                     });
                   });
                 }
               } else if (payload.eventType === "UPDATE") {
                 const updatedEvent = payload.new as Event;
                 setLocalEvents((prev) => {
-                  const existingIndex = prev.findIndex((e) => String(e.id) === String(updatedEvent.id));
+                  const existingIndex = prev.findIndex(
+                    (e) => String(e.id) === String(updatedEvent.id),
+                  );
                   if (existingIndex >= 0) {
                     // Event exists - update it if it's still in the selected day, otherwise remove it
                     if (isEventInSelectedDay(updatedEvent)) {
@@ -260,11 +283,16 @@ export default function ConsoleClient({
                       // Re-sort by start time
                       return updated.sort((a, b) => {
                         if (!a.start || !b.start) return 0;
-                        return new Date(a.start).getTime() - new Date(b.start).getTime();
+                        return (
+                          new Date(a.start).getTime() -
+                          new Date(b.start).getTime()
+                        );
                       });
                     } else {
                       // Event moved out of selected day - remove it
-                      return prev.filter((e) => String(e.id) !== String(updatedEvent.id));
+                      return prev.filter(
+                        (e) => String(e.id) !== String(updatedEvent.id),
+                      );
                     }
                   } else {
                     // Event doesn't exist in current list - add it if it belongs to selected day
@@ -272,7 +300,10 @@ export default function ConsoleClient({
                       const updated = [...prev, updatedEvent];
                       return updated.sort((a, b) => {
                         if (!a.start || !b.start) return 0;
-                        return new Date(a.start).getTime() - new Date(b.start).getTime();
+                        return (
+                          new Date(a.start).getTime() -
+                          new Date(b.start).getTime()
+                        );
                       });
                     }
                     return prev;
@@ -281,9 +312,11 @@ export default function ConsoleClient({
               } else if (payload.eventType === "DELETE") {
                 const deletedEvent = payload.old as Partial<Event>;
                 console.log("Delete event payload:", deletedEvent);
-                setLocalEvents((prev) => prev.filter((e) => String(e.id) !== String(deletedEvent.id)));
+                setLocalEvents((prev) =>
+                  prev.filter((e) => String(e.id) !== String(deletedEvent.id)),
+                );
               }
-            }
+            },
           )
           .subscribe((status) => {
             console.log("Events subscription status:", status);
@@ -304,7 +337,13 @@ export default function ConsoleClient({
         supabase.removeChannel(eventsChannel);
       }
     };
-  }, [supabase, selectedDayString, isTaskInSelectedDay, isEventInSelectedDay, sortTasks]);
+  }, [
+    supabase,
+    selectedDayString,
+    isTaskInSelectedDay,
+    isEventInSelectedDay,
+    sortTasks,
+  ]);
 
   // =============================================
   // Timezone Sync
@@ -313,12 +352,18 @@ export default function ConsoleClient({
   useEffect(() => {
     const syncTimezone = async () => {
       // If profile timezone is missing or generic UTC, try to update it with browser's local timezone
-      if (!profileTimezone || profileTimezone === "UTC" || profileTimezone === "Etc/UTC") {
+      if (
+        !profileTimezone ||
+        profileTimezone === "UTC" ||
+        profileTimezone === "Etc/UTC"
+      ) {
         const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
         if (browserTz && browserTz !== profileTimezone) {
           console.log("Syncing timezone to profile:", browserTz);
           try {
-            const { data: { user } } = await supabase.auth.getUser();
+            const {
+              data: { user },
+            } = await supabase.auth.getUser();
             if (user) {
               await supabase
                 .from("user_profiles")
@@ -357,7 +402,11 @@ export default function ConsoleClient({
   }, [isTaskSaving]);
 
   const handleSaveTask = useCallback(
-    async (payload: { name: string; description: string; due: string | null }) => {
+    async (payload: {
+      name: string;
+      description: string;
+      due: string | null;
+    }) => {
       setIsTaskSaving(true);
       setTaskError(null);
       try {
@@ -407,7 +456,9 @@ export default function ConsoleClient({
         setIsTaskModalOpen(false);
         setActiveTask(null);
       } catch (err) {
-        setTaskError(err instanceof Error ? err.message : "Failed to save task.");
+        setTaskError(
+          err instanceof Error ? err.message : "Failed to save task.",
+        );
       } finally {
         setIsTaskSaving(false);
       }
@@ -433,11 +484,42 @@ export default function ConsoleClient({
       setIsTaskModalOpen(false);
       setActiveTask(null);
     } catch (err) {
-      setTaskError(err instanceof Error ? err.message : "Failed to delete task.");
+      setTaskError(
+        err instanceof Error ? err.message : "Failed to delete task.",
+      );
     } finally {
       setIsTaskSaving(false);
     }
   }, [activeTask, getUserId, supabase]);
+
+  const handleToggleTaskDone = useCallback(
+    async (task: Task) => {
+      setTaskError(null);
+      try {
+        const userId = await getUserId();
+        const nextDone = !task.done;
+        const { data, error } = await supabase
+          .from("tasks")
+          .update({ done: nextDone })
+          .eq("id", task.id)
+          .eq("owner", userId)
+          .select("id, name, description, due, done")
+          .single();
+
+        if (error) throw error;
+        if (data) {
+          setTasks((prev) =>
+            prev.map((item) => (item.id === task.id ? (data as Task) : item)),
+          );
+        }
+      } catch (err) {
+        setTaskError(
+          err instanceof Error ? err.message : "Failed to update task.",
+        );
+      }
+    },
+    [getUserId, supabase],
+  );
   // =============================================
   // Transcript/Voice panel state
   // =============================================
@@ -470,10 +552,205 @@ export default function ConsoleClient({
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
+  // =============================================
+  // Gmail integration state (Arcade MCP)
+  // =============================================
+
+  // Whether to show the bottom-right Gmail prompt
+  const [showGmailPrompt, setShowGmailPrompt] = useState(false);
+  // Whether Gmail is connected via Arcade
+  const [gmailConnected, setGmailConnected] = useState(false);
+  // Whether we're currently authorizing Gmail
+  const [isGmailAuthorizing, setIsGmailAuthorizing] = useState(false);
+  // Whether Arcade is configured on the backend
+  const [arcadeConfigured, setArcadeConfigured] = useState(false);
+
   // Transcript buffering and debouncing refs
   const transcriptBufferRef = useRef<
     Map<string, { text: string; timestamp: Date; timer: NodeJS.Timeout | null }>
   >(new Map());
+
+  // =============================================
+  // Gmail integration - check status on mount
+  // =============================================
+
+  /**
+   * Fetches Gmail integration status from /api/gmail/status.
+   * Optionally shows the prompt (when explicitly requested by the agent/UI).
+   */
+  const checkGmailStatus = useCallback(
+    async (opts?: { allowPrompt?: boolean }) => {
+      try {
+        const response = await fetch("/api/gmail/status");
+        if (!response.ok) {
+          // If status can't be fetched (e.g. user is not authed), don't leave a stale prompt stuck on.
+          setArcadeConfigured(false);
+          setShowGmailPrompt(false);
+          return;
+        }
+
+        const data = await response.json();
+
+        // Track whether Arcade is configured
+        setArcadeConfigured(data.arcade_configured === true);
+
+        // Track connection status
+        const connected = data.connected === true;
+        setGmailConnected(connected);
+
+        // Only show the prompt when explicitly requested (e.g. agent needs Gmail right now).
+        // This avoids the "always-on" bottom-right widget vibe.
+        const shouldShow =
+          opts?.allowPrompt === true &&
+          data.arcade_configured &&
+          !connected &&
+          !data.is_snoozed;
+        setShowGmailPrompt(shouldShow);
+      } catch (err) {
+        console.error("[Gmail] Error checking status:", err);
+        // Avoid sticky prompt if the status check throws.
+        setShowGmailPrompt(false);
+      }
+    },
+    [],
+  );
+
+  // Check Gmail status on mount
+  useEffect(() => {
+    checkGmailStatus();
+  }, [checkGmailStatus]);
+
+  /**
+   * Initiates Gmail authorization via Arcade.
+   * Opens the OAuth URL in a new tab and polls for completion.
+   */
+  const handleGmailConnect = useCallback(async () => {
+    setIsGmailAuthorizing(true);
+
+    // IMPORTANT: open a popup synchronously on the click event.
+    // Browsers often block `window.open()` if it's called after an `await`/promise tick.
+    // We open a blank window immediately, then navigate it once we receive the Arcade URL.
+    const popup = window.open("about:blank", "_blank", "width=600,height=700");
+    if (popup) {
+      // Prevent reverse-tabnabbing once we navigate to a third-party OAuth page.
+      // (We keep a reference so we can set `location`, so we can't rely on `noopener` here.)
+      try {
+        popup.opener = null;
+      } catch {
+        // Some browsers may disallow setting opener; safe to ignore.
+      }
+    }
+
+    try {
+      const response = await fetch("/api/gmail/authorize", { method: "POST" });
+      if (!response.ok) {
+        // Get the actual error message from the response
+        let errorData: any;
+        try {
+          const text = await response.text();
+          errorData = text ? JSON.parse(text) : { error: "Empty response" };
+        } catch (e) {
+          errorData = {
+            error: `Failed to parse response: ${await response.text()}`,
+          };
+        }
+        console.error("[Gmail] Authorization request failed:", {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData.error || errorData,
+          details: errorData.details,
+        });
+        // Close the blank popup if we couldn't get a URL.
+        try {
+          popup?.close();
+        } catch {
+          // ignore
+        }
+        setIsGmailAuthorizing(false);
+        return;
+      }
+
+      const data = await response.json();
+
+      // If already completed, just refresh status
+      if (data.status === "completed") {
+        setGmailConnected(true);
+        setShowGmailPrompt(false);
+        try {
+          popup?.close();
+        } catch {
+          // ignore
+        }
+        setIsGmailAuthorizing(false);
+        return;
+      }
+
+      // Navigate the popup to the authorization URL
+      if (data.url) {
+        if (popup && !popup.closed) {
+          popup.location.href = data.url;
+        } else {
+          // Fallback: if popup was blocked, fall back to a full-page redirect.
+          window.location.href = data.url;
+        }
+      } else {
+        // No URL returned (misconfigured provider / Arcade issue) — close the blank popup.
+        try {
+          popup?.close();
+        } catch {
+          // ignore
+        }
+      }
+
+      // Poll for completion (up to 2 minutes, every 3 seconds)
+      const maxAttempts = 40;
+      let attempts = 0;
+
+      const pollInterval = setInterval(async () => {
+        attempts++;
+
+        try {
+          const statusResponse = await fetch("/api/gmail/status");
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+
+            if (statusData.connected) {
+              // Success! User completed OAuth
+              clearInterval(pollInterval);
+              setGmailConnected(true);
+              setShowGmailPrompt(false);
+              setIsGmailAuthorizing(false);
+            }
+          }
+        } catch {
+          // Ignore poll errors
+        }
+
+        // Stop polling after max attempts
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          setIsGmailAuthorizing(false);
+        }
+      }, 3000);
+    } catch (err) {
+      console.error("[Gmail] Error initiating authorization:", err);
+      setIsGmailAuthorizing(false);
+    }
+  }, []);
+
+  /**
+   * Snoozes the Gmail prompt for 14 days.
+   */
+  const handleGmailSnooze = useCallback(async () => {
+    try {
+      const response = await fetch("/api/gmail/snooze", { method: "POST" });
+      if (response.ok) {
+        setShowGmailPrompt(false);
+      }
+    } catch (err) {
+      console.error("[Gmail] Error snoozing:", err);
+    }
+  }, []);
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // =============================================
@@ -516,7 +793,7 @@ export default function ConsoleClient({
             lastEntry &&
             lastEntry.speaker === speaker &&
             lastEntry.text.toLowerCase().trim() ===
-            buffer.text.toLowerCase().trim()
+              buffer.text.toLowerCase().trim()
           ) {
             return null; // Skip duplicate
           }
@@ -638,62 +915,109 @@ export default function ConsoleClient({
     [commitBufferedTranscripts],
   );
 
+  // Render transcript text with clickable links (e.g., Arcade OAuth authorization URLs).
+  // We intentionally do NOT use `dangerouslySetInnerHTML` here to avoid XSS risks.
+  const renderTranscriptText = useCallback((text: string) => {
+    // A conservative URL matcher: good enough for OAuth links shown by Arcade/LiveKit.
+    // We avoid trailing punctuation like ")" or "," which often surrounds URLs in text.
+    const urlRegex = /https?:\/\/[^\s),]+/g;
+
+    const nodes: React.ReactNode[] = [];
+    let lastIndex = 0;
+
+    for (const match of text.matchAll(urlRegex)) {
+      const url = match[0];
+      const start = match.index ?? 0;
+      const end = start + url.length;
+
+      // Push any plain text before the URL
+      if (start > lastIndex) {
+        nodes.push(text.slice(lastIndex, start));
+      }
+
+      // Push the URL as a clickable link
+      nodes.push(
+        <a
+          key={`url-${start}-${end}`}
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-cyan-300 underline break-all hover:text-cyan-200"
+        >
+          {url}
+        </a>,
+      );
+
+      lastIndex = end;
+    }
+
+    // Push any trailing plain text after the last URL
+    if (lastIndex < text.length) {
+      nodes.push(text.slice(lastIndex));
+    }
+
+    return <>{nodes}</>;
+  }, []);
+
   // =============================================
   // Audio track handling (ported from /talk)
   // =============================================
 
-  const handleTrack = useCallback((track: RemoteTrack, participantIdentity: string) => {
-    if (track.kind === Track.Kind.Audio) {
-      console.log("Handling audio track from:", participantIdentity, track);
+  const handleTrack = useCallback(
+    (track: RemoteTrack, participantIdentity: string) => {
+      if (track.kind === Track.Kind.Audio) {
+        console.log("Handling audio track from:", participantIdentity, track);
 
-      if (!audioRef.current) {
-        console.error("Audio element not available");
-        return;
-      }
-
-      // Stop any existing tracks
-      if (audioRef.current.srcObject) {
-        const existingStream = audioRef.current.srcObject as MediaStream;
-        existingStream.getTracks().forEach((t) => {
-          t.stop();
-          existingStream.removeTrack(t);
-        });
-      }
-
-      // Create new media stream and attach track
-      const stream = new MediaStream();
-      if (track.mediaStreamTrack) {
-        stream.addTrack(track.mediaStreamTrack);
-        audioRef.current.srcObject = stream;
-
-        // Ensure audio element is ready
-        audioRef.current.volume = 1.0;
-        audioRef.current.muted = false;
-
-        // Play audio with error handling
-        const playPromise = audioRef.current.play();
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => {
-              console.log(
-                "Audio track playing successfully from:",
-                participantIdentity,
-              );
-            })
-            .catch((err) => {
-              console.error("Error playing audio:", err);
-              if (err.name === "NotAllowedError") {
-                setError(
-                  "Please allow audio playback in your browser settings",
-                );
-              }
-            });
+        if (!audioRef.current) {
+          console.error("Audio element not available");
+          return;
         }
-      } else {
-        console.warn("Track has no mediaStreamTrack:", track);
+
+        // Stop any existing tracks
+        if (audioRef.current.srcObject) {
+          const existingStream = audioRef.current.srcObject as MediaStream;
+          existingStream.getTracks().forEach((t) => {
+            t.stop();
+            existingStream.removeTrack(t);
+          });
+        }
+
+        // Create new media stream and attach track
+        const stream = new MediaStream();
+        if (track.mediaStreamTrack) {
+          stream.addTrack(track.mediaStreamTrack);
+          audioRef.current.srcObject = stream;
+
+          // Ensure audio element is ready
+          audioRef.current.volume = 1.0;
+          audioRef.current.muted = false;
+
+          // Play audio with error handling
+          const playPromise = audioRef.current.play();
+          if (playPromise !== undefined) {
+            playPromise
+              .then(() => {
+                console.log(
+                  "Audio track playing successfully from:",
+                  participantIdentity,
+                );
+              })
+              .catch((err) => {
+                console.error("Error playing audio:", err);
+                if (err.name === "NotAllowedError") {
+                  setError(
+                    "Please allow audio playback in your browser settings",
+                  );
+                }
+              });
+          }
+        } else {
+          console.warn("Track has no mediaStreamTrack:", track);
+        }
       }
-    }
-  }, []);
+    },
+    [],
+  );
 
   // =============================================
   // LiveKit connection function (ported from /talk)
@@ -728,11 +1052,20 @@ export default function ConsoleClient({
 
       // Helper to cleanup duplicate agents
       const cleanupDuplicateAgents = async (currentRoom: Room) => {
-        const agents = Array.from(currentRoom.remoteParticipants.values())
-          .filter(p => p.identity === "agent" || p.identity.includes("agent") || p.identity === "Tetra");
+        const agents = Array.from(
+          currentRoom.remoteParticipants.values(),
+        ).filter(
+          (p) =>
+            p.identity === "agent" ||
+            p.identity.includes("agent") ||
+            p.identity === "Tetra",
+        );
 
         if (agents.length > 1) {
-          console.log("Found multiple agents, cleaning up...", agents.map(a => a.identity));
+          console.log(
+            "Found multiple agents, cleaning up...",
+            agents.map((a) => a.identity),
+          );
 
           const sortedAgents = agents.sort((a, b) => {
             const timeA = a.joinedAt?.getTime() || 0;
@@ -748,7 +1081,10 @@ export default function ConsoleClient({
               await fetch("/api/kick-participant", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ room: currentRoom.name, identity: agent.identity }),
+                body: JSON.stringify({
+                  room: currentRoom.name,
+                  identity: agent.identity,
+                }),
               });
             } catch (err) {
               console.error("Failed to remove agent:", err);
@@ -868,11 +1204,22 @@ export default function ConsoleClient({
 
             try {
               const data = JSON.parse(text);
+              // UI events sent by the voice agent (via LiveKit data messages).
+              // This lets the agent reliably "nudge" the user to connect Gmail by
+              // showing the bottom-right Gmail Integration prompt.
+              if (
+                data?.type === "ui_event" &&
+                data?.event === "gmail_connect_required"
+              ) {
+                // Reconcile against server truth; only show if Arcade is configured and not snoozed.
+                // If `/api/gmail/status` fails, we intentionally do NOT force a sticky prompt.
+                checkGmailStatus({ allowPrompt: true });
+              }
 
               // Handle Agent State Updates (Event/Task CUD)
               if (data.type === "event_update" || data.type === "task_update") {
                 const action = data.action; // INSERT, UPDATE, DELETE
-                const entity = data.data;   // The record or {id}
+                const entity = data.data; // The record or {id}
                 const currentDay = selectedDayRef.current;
 
                 // Helper checks using ref (to avoid stale closures)
@@ -897,21 +1244,28 @@ export default function ConsoleClient({
                 if (data.type === "task_update") {
                   if (action === "INSERT") {
                     if (isInDayTask(entity)) {
-                      setTasks(prev => {
-                        if (prev.some(t => String(t.id) === String(entity.id))) return prev;
+                      setTasks((prev) => {
+                        if (
+                          prev.some((t) => String(t.id) === String(entity.id))
+                        )
+                          return prev;
                         return sortTasks([...prev, entity]);
                       });
                     }
                   } else if (action === "UPDATE") {
-                    setTasks(prev => {
-                      const idx = prev.findIndex(t => String(t.id) === String(entity.id));
+                    setTasks((prev) => {
+                      const idx = prev.findIndex(
+                        (t) => String(t.id) === String(entity.id),
+                      );
                       if (idx >= 0) {
                         if (isInDayTask(entity)) {
                           const newArr = [...prev];
                           newArr[idx] = entity;
                           return sortTasks(newArr);
                         } else {
-                          return prev.filter(t => String(t.id) !== String(entity.id));
+                          return prev.filter(
+                            (t) => String(t.id) !== String(entity.id),
+                          );
                         }
                       } else {
                         if (isInDayTask(entity)) {
@@ -921,43 +1275,63 @@ export default function ConsoleClient({
                       }
                     });
                   } else if (action === "DELETE") {
-                    setTasks(prev => prev.filter(t => String(t.id) !== String(entity.id)));
+                    setTasks((prev) =>
+                      prev.filter((t) => String(t.id) !== String(entity.id)),
+                    );
                   }
                 } else if (data.type === "event_update") {
                   if (action === "INSERT") {
                     if (isInDayEvent(entity)) {
-                      setLocalEvents(prev => {
-                        if (prev.some(e => String(e.id) === String(entity.id))) return prev;
+                      setLocalEvents((prev) => {
+                        if (
+                          prev.some((e) => String(e.id) === String(entity.id))
+                        )
+                          return prev;
                         return [...prev, entity].sort((a, b) =>
-                          (a.start && b.start) ? new Date(a.start).getTime() - new Date(b.start).getTime() : 0
+                          a.start && b.start
+                            ? new Date(a.start).getTime() -
+                              new Date(b.start).getTime()
+                            : 0,
                         );
                       });
                     }
                   } else if (action === "UPDATE") {
-                    setLocalEvents(prev => {
-                      const idx = prev.findIndex(e => String(e.id) === String(entity.id));
+                    setLocalEvents((prev) => {
+                      const idx = prev.findIndex(
+                        (e) => String(e.id) === String(entity.id),
+                      );
                       if (idx >= 0) {
                         if (isInDayEvent(entity)) {
                           const newArr = [...prev];
                           newArr[idx] = entity;
                           return newArr.sort((a, b) =>
-                            (a.start && b.start) ? new Date(a.start).getTime() - new Date(b.start).getTime() : 0
+                            a.start && b.start
+                              ? new Date(a.start).getTime() -
+                                new Date(b.start).getTime()
+                              : 0,
                           );
                         } else {
-                          return prev.filter(e => String(e.id) !== String(entity.id));
+                          return prev.filter(
+                            (e) => String(e.id) !== String(entity.id),
+                          );
                         }
                       } else {
                         if (isInDayEvent(entity)) {
                           const newArr = [...prev, entity];
                           return newArr.sort((a, b) =>
-                            (a.start && b.start) ? new Date(a.start).getTime() - new Date(b.start).getTime() : 0
+                            a.start && b.start
+                              ? new Date(a.start).getTime() -
+                                new Date(b.start).getTime()
+                              : 0,
                           );
                         }
                         return prev;
                       }
                     });
                   } else if (action === "DELETE") {
-                    setLocalEvents(prev => prev.filter(e => String(e.id) !== String(entity.id)));
+                    setLocalEvents((prev) =>
+                      prev.filter((e) => String(e.id) !== String(entity.id)),
+                    );
                   }
                 }
               }
@@ -1056,7 +1430,9 @@ export default function ConsoleClient({
       const dispatchAgentWithRetry = async (retries = 3, delay = 1000) => {
         for (let attempt = 1; attempt <= retries; attempt++) {
           try {
-            console.log(`[Dispatch] Attempt ${attempt}/${retries} to dispatch agent...`);
+            console.log(
+              `[Dispatch] Attempt ${attempt}/${retries} to dispatch agent...`,
+            );
             const triggerResponse = await fetch("/api/trigger-agent", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -1066,7 +1442,10 @@ export default function ConsoleClient({
               console.log("[Dispatch] Agent trigger sent successfully");
               return true;
             } else {
-              console.warn(`[Dispatch] Attempt ${attempt} failed with status:`, triggerResponse.status);
+              console.warn(
+                `[Dispatch] Attempt ${attempt} failed with status:`,
+                triggerResponse.status,
+              );
             }
           } catch (triggerErr) {
             console.warn(`[Dispatch] Attempt ${attempt} failed:`, triggerErr);
@@ -1075,7 +1454,9 @@ export default function ConsoleClient({
             await new Promise((resolve) => setTimeout(resolve, delay));
           }
         }
-        console.warn("[Dispatch] All dispatch attempts failed, agent may need to join automatically");
+        console.warn(
+          "[Dispatch] All dispatch attempts failed, agent may need to join automatically",
+        );
         return false;
       };
 
@@ -1086,7 +1467,9 @@ export default function ConsoleClient({
         await newRoom.localParticipant.setMicrophoneEnabled(true);
         console.log("Microphone enabled");
 
-        const micPublication = newRoom.localParticipant.audioTrackPublications.values().next().value;
+        const micPublication = newRoom.localParticipant.audioTrackPublications
+          .values()
+          .next().value;
         if (micPublication) {
           console.log("Microphone track published:", micPublication.trackSid);
         } else {
@@ -1187,10 +1570,13 @@ export default function ConsoleClient({
     <div className="relative h-screen bg-black cyber-grid overflow-hidden">
       {/* High contrast grid overlay */}
       <div className="absolute inset-0 pointer-events-none opacity-30">
-        <div className="absolute inset-0" style={{
-          backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(255,255,255,0.1) 39px, rgba(255,255,255,0.1) 40px),
-                           repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(255,255,255,0.1) 39px, rgba(255,255,255,0.1) 40px)`
-        }} />
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(255,255,255,0.1) 39px, rgba(255,255,255,0.1) 40px),
+                           repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(255,255,255,0.1) 39px, rgba(255,255,255,0.1) 40px)`,
+          }}
+        />
       </div>
 
       {/* Main content */}
@@ -1223,14 +1609,20 @@ export default function ConsoleClient({
             onClick={startTalking}
             disabled={isConnecting}
             className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 group pt-12 pb-4 cursor-pointer disabled:cursor-wait"
-            style={{ color: 'rgb(253, 247, 228)' }}
+            style={{ color: "rgb(253, 247, 228)" }}
           >
             {/* Tetrahedron icon with glow effect */}
-            <div className={`w-12 h-12 relative group-hover:scale-110 transition-transform duration-300 ${isConnected ? 'tetra-glow-active' : 'tetra-glow'}`}>
+            <div
+              className={`w-14 h-14 relative group-hover:scale-110 transition-transform duration-300 ${isConnected ? "tetra-glow-active" : "tetra-glow"}`}
+            >
               <TetrahedronIcon isConnected={isConnected} />
             </div>
             <span className="font-mono text-xs uppercase tracking-[0.2em] opacity-90 group-hover:opacity-100 transition-opacity">
-              {isConnecting ? "Connecting..." : isConnected ? "Connected" : "Talk to Tetra"}
+              {isConnecting
+                ? "Connecting..."
+                : isConnected
+                  ? "Connected"
+                  : "Talk to Tetra"}
             </span>
           </button>
 
@@ -1244,17 +1636,21 @@ export default function ConsoleClient({
         <div className="px-6 py-3 md:px-12 border-b-2 border-white bg-black">
           <div className="flex items-center gap-4 text-xs font-mono text-white">
             <span className="flex items-center gap-2">
-              <span className={`w-2 h-2 ${isConnected ? 'bg-green-400' : 'bg-white'}`} />
+              <span
+                className={`w-2 h-2 ${isConnected ? "bg-green-400" : "bg-white"}`}
+              />
               {isConnected ? "AGENT CONNECTED" : "SYSTEM ONLINE"}
             </span>
             <span className="opacity-50">|</span>
             <span className="uppercase tracking-wider">
-              {selectedDay.toLocaleDateString("en-US", {
-                weekday: "long",
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-              }).toUpperCase()}
+              {selectedDay
+                .toLocaleDateString("en-US", {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                })
+                .toUpperCase()}
             </span>
             <span className="opacity-50">|</span>
             <span className="opacity-80">
@@ -1272,10 +1668,11 @@ export default function ConsoleClient({
             - Mobile: stacks vertically
           */}
           <div
-            className={`grid gap-8 h-full min-h-0 max-w-[1800px] mx-auto ${isTranscriptOpen
-              ? 'grid-cols-1 lg:grid-cols-[2fr_2fr_1fr]'
-              : 'grid-cols-1 lg:grid-cols-2'
-              }`}
+            className={`grid gap-8 h-full min-h-0 max-w-[1800px] mx-auto ${
+              isTranscriptOpen
+                ? "grid-cols-1 lg:grid-cols-[2fr_2fr_1fr]"
+                : "grid-cols-1 lg:grid-cols-2"
+            }`}
           >
             {/* Timeline Panel (Calendar) */}
             <div className="glass-panel p-8 flex flex-col border-2 border-white min-h-0">
@@ -1291,7 +1688,10 @@ export default function ConsoleClient({
 
               {/* Timeline view */}
               <div className="flex-1 min-h-0">
-                <Timeline events={localEvents || []} showCurrentTime={isToday} />
+                <Timeline
+                  events={localEvents || []}
+                  showCurrentTime={isToday}
+                />
               </div>
             </div>
 
@@ -1310,31 +1710,33 @@ export default function ConsoleClient({
                     ADD TASK
                   </button>
                 </div>
-                <TasksList tasks={tasks} onEditTask={openEditTaskModal} />
+                <TasksList
+                  tasks={tasks}
+                  onEditTask={openEditTaskModal}
+                  onToggleDone={handleToggleTaskDone}
+                />
               </div>
 
               {/* System Feed Panel - kept under tasks as requested */}
-              <div className="glass-panel p-8 h-48 border-2 border-white">
+              <div className="glass-panel p-8 h-48 border-2 border-white order-last md:order-none">
                 <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white opacity-60 mb-6">
                   SYSTEM FEED
                 </h2>
                 <div className="space-y-2 text-xs font-mono text-white opacity-80">
                   <p className="flex items-center gap-2">
-                    <span className="opacity-50">
-                      [{sessionTime}]
-                    </span>
+                    <span className="opacity-50">[{sessionTime}]</span>
                     <span className="text-white">SESSION_INIT</span>
                   </p>
                   <p className="flex items-center gap-2">
-                    <span className="opacity-50">
-                      [{sessionTime}]
-                    </span>
+                    <span className="opacity-50">[{sessionTime}]</span>
                     <span className="opacity-70">Dashboard loaded</span>
                   </p>
                   <p className="flex items-center gap-2">
                     <span className="opacity-50">[--:--:--]</span>
                     <span className="opacity-60 italic">
-                      {isConnected ? "Voice agent active" : "Awaiting voice input..."}
+                      {isConnected
+                        ? "Voice agent active"
+                        : "Awaiting voice input..."}
                     </span>
                   </p>
                 </div>
@@ -1352,18 +1754,15 @@ export default function ConsoleClient({
                   <div className="flex items-center gap-2">
                     {/* Connection status indicator */}
                     <span
-                      className={`font-mono text-xs px-2 py-1 border ${isConnected
-                        ? "border-green-500 text-green-400 bg-green-500/10"
-                        : isConnecting
-                          ? "border-yellow-500 text-yellow-400 bg-yellow-500/10"
-                          : "border-zinc-700 text-zinc-500"
-                        }`}
+                      className={`font-mono text-xs px-2 py-1 border ${
+                        isConnected
+                          ? "border-green-500 text-green-400 bg-green-500/10"
+                          : isConnecting
+                            ? "border-yellow-500 text-yellow-400 bg-yellow-500/10"
+                            : "border-zinc-700 text-zinc-500"
+                      }`}
                     >
-                      {isConnected
-                        ? "LIVE"
-                        : isConnecting
-                          ? "..."
-                          : "OFF"}
+                      {isConnected ? "LIVE" : isConnecting ? "..." : "OFF"}
                     </span>
                     {/* Collapse button */}
                     <button
@@ -1371,8 +1770,18 @@ export default function ConsoleClient({
                       className="text-white/60 hover:text-white transition-colors p-1"
                       aria-label="Collapse transcript"
                     >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M6 18L18 6M6 6l12 12"
+                        />
                       </svg>
                     </button>
                   </div>
@@ -1386,11 +1795,13 @@ export default function ConsoleClient({
                 )}
 
                 {/* Waiting for agent indicator */}
-                {isConnected && isWaitingForAgent && participants.length === 0 && (
-                  <p className="text-yellow-400 font-mono text-xs mb-4 animate-pulse">
-                    ⏳ Waiting for agent to join...
-                  </p>
-                )}
+                {isConnected &&
+                  isWaitingForAgent &&
+                  participants.length === 0 && (
+                    <p className="text-yellow-400 font-mono text-xs mb-4 animate-pulse">
+                      ⏳ Waiting for agent to join...
+                    </p>
+                  )}
 
                 {/* Connect/Disconnect controls */}
                 <div className="mb-4">
@@ -1442,10 +1853,11 @@ export default function ConsoleClient({
                         >
                           <div className="flex items-center gap-2 mb-1">
                             <span
-                              className={`font-mono text-xs uppercase ${entry.speaker === "Tetra"
-                                ? "text-cyan-400"
-                                : "text-fuchsia-400"
-                                }`}
+                              className={`font-mono text-xs uppercase ${
+                                entry.speaker === "Tetra"
+                                  ? "text-cyan-400"
+                                  : "text-fuchsia-400"
+                              }`}
                             >
                               {entry.speaker}:
                             </span>
@@ -1454,7 +1866,7 @@ export default function ConsoleClient({
                             </span>
                           </div>
                           <p className="text-zinc-300 font-mono text-xs">
-                            {entry.text}
+                            {renderTranscriptText(entry.text)}
                           </p>
                         </div>
                       ))}
@@ -1466,10 +1878,63 @@ export default function ConsoleClient({
           </div>
         </main>
 
+        {/* Gmail Connection Prompt - bottom-right toast */}
+        {showGmailPrompt && arcadeConfigured && (
+          <div className="fixed bottom-20 right-6 z-50 animate-fade-in">
+            <div className="glass-panel border-2 border-white p-4 max-w-xs">
+              {/* Header */}
+              <div className="flex items-center gap-2 mb-3">
+                <svg
+                  className="w-5 h-5 text-white"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                  />
+                </svg>
+                <span className="font-mono text-xs uppercase tracking-wider text-white">
+                  Gmail Integration
+                </span>
+              </div>
+
+              {/* Message */}
+              <p className="font-mono text-xs text-white/80 mb-4">
+                Connect Gmail to let Tetra summarize your emails.
+              </p>
+
+              {/* Actions */}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGmailConnect}
+                  disabled={isGmailAuthorizing}
+                  className="flex-1 btn-neon-primary text-xs py-2 disabled:opacity-50 disabled:cursor-wait"
+                >
+                  {isGmailAuthorizing ? "Connecting..." : "Connect"}
+                </button>
+                <button
+                  onClick={handleGmailSnooze}
+                  disabled={isGmailAuthorizing}
+                  className="btn-neon-secondary text-xs py-2 px-3 disabled:opacity-50"
+                  title="Snooze for 14 days"
+                >
+                  Not now
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Footer - angular */}
         <footer className="px-6 py-4 md:px-12 border-t-2 border-white">
           <div className="flex items-center justify-between text-xs font-mono text-white">
-            <span className="uppercase tracking-wider">TETRA OS // HACKATHON BUILD</span>
+            <span className="uppercase tracking-wider">
+              TETRA OS // HACKATHON BUILD
+            </span>
             <span className="opacity-60 uppercase tracking-wider">
               CONNECTION: {isConnected ? "ACTIVE" : "SECURE"}
             </span>
@@ -1478,12 +1943,7 @@ export default function ConsoleClient({
       </div>
 
       {/* Hidden audio element for agent audio playback */}
-      <audio
-        ref={audioRef}
-        autoPlay
-        playsInline
-        style={{ display: "none" }}
-      />
+      <audio ref={audioRef} autoPlay playsInline style={{ display: "none" }} />
 
       <TaskModal
         isOpen={isTaskModalOpen}
@@ -1552,6 +2012,12 @@ function Timeline({
                 <div className="flex-1 relative" />
               </div>
             ))}
+            <div className="flex items-start h-[20px] border-t border-white/20">
+              <div className="w-16 pr-3 text-right text-xs font-mono text-white opacity-60 -mt-2">
+                23:59
+              </div>
+              <div className="flex-1 relative" />
+            </div>
           </div>
 
           {/* Events layer */}
@@ -1617,14 +2083,18 @@ function CurrentTimeIndicator() {
 function TasksList({
   tasks,
   onEditTask,
+  onToggleDone,
 }: {
   tasks: Task[];
   onEditTask: (task: Task) => void;
+  onToggleDone: (task: Task) => void;
 }) {
   if (tasks.length === 0) {
     return (
       <div className="text-center py-8">
-        <p className="text-white font-mono text-sm opacity-80">NO TASKS FOR TODAY</p>
+        <p className="text-white font-mono text-sm opacity-80">
+          NO TASKS FOR TODAY
+        </p>
         <p className="text-white text-xs mt-2 opacity-60">
           ADD TASKS WITH VOICE OR MANUALLY
         </p>
@@ -1637,18 +2107,18 @@ function TasksList({
       {tasks.map((task) => (
         <div
           key={task.id}
-          className={`group p-4 border-2 transition-colors cursor-pointer ${task.done
-            ? "border-white/20 bg-black/40 opacity-60"
-            : "border-white/40 bg-black/20 hover:bg-white/5"
-            }`}
+          className={`group p-4 border-2 transition-colors cursor-pointer ${
+            task.done
+              ? "border-white/20 bg-black/40 opacity-60"
+              : "border-white/40 bg-black/20 hover:bg-white/5"
+          }`}
           onClick={() => onEditTask(task)}
         >
           <div className="flex items-start gap-3">
             <div
-              className={`w-4 h-4 border-2 mt-0.5 flex-shrink-0 flex items-center justify-center ${task.done
-                ? "border-white bg-white/20"
-                : "border-white/60"
-                }`}
+              className={`w-4 h-4 border-2 mt-0.5 flex-shrink-0 flex items-center justify-center ${
+                task.done ? "border-white bg-white/20" : "border-white/60"
+              }`}
             >
               {task.done && (
                 <svg
@@ -1669,19 +2139,22 @@ function TasksList({
 
             <div className="min-w-0 flex-1">
               <p
-                className={`font-mono text-sm uppercase tracking-wider ${task.done ? "text-white/50 line-through" : "text-white"
-                  }`}
+                className={`font-mono text-sm uppercase tracking-wider ${
+                  task.done ? "text-white/50 line-through" : "text-white"
+                }`}
               >
                 {task.name || "UNTITLED TASK"}
               </p>
               {task.due && (
                 <p className="text-xs text-white/60 mt-1 font-mono">
                   DUE:{" "}
-                  {new Date(task.due).toLocaleTimeString("en-US", {
-                    hour: "numeric",
-                    minute: "2-digit",
-                    hour12: true,
-                  }).toUpperCase()}
+                  {new Date(task.due)
+                    .toLocaleTimeString("en-US", {
+                      hour: "numeric",
+                      minute: "2-digit",
+                      hour12: true,
+                    })
+                    .toUpperCase()}
                 </p>
               )}
               {task.description && (
@@ -1713,7 +2186,11 @@ function TasksList({
 
 function TetrahedronIcon({ isConnected }: { isConnected?: boolean }) {
   return (
-    <svg viewBox="0 0 100 100" className="w-full h-full" style={{ color: 'rgb(253, 247, 228)' }}>
+    <svg
+      viewBox="0 0 100 100"
+      className="w-full h-full"
+      style={{ color: "rgb(253, 247, 228)" }}
+    >
       {/* Outer triangle */}
       <polygon
         points="50,10 10,90 90,90"

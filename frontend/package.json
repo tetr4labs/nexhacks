@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@arcadeai/arcadejs": "^0.1.0",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.90.1",
     "ical.js": "^2.1.0",
