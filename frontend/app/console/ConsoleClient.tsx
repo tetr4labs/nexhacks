@@ -2115,7 +2115,14 @@ function TasksList({
           onClick={() => onEditTask(task)}
         >
           <div className="flex items-start gap-3">
-            <div
+            <button
+              type="button"
+              aria-label={task.done ? "Mark task incomplete" : "Mark task complete"}
+              aria-pressed={task.done}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleDone(task);
+              }}
               className={`w-4 h-4 border-2 mt-0.5 flex-shrink-0 flex items-center justify-center ${
                 task.done ? "border-white bg-white/20" : "border-white/60"
               }`}
@@ -2135,7 +2142,7 @@ function TasksList({
                   />
                 </svg>
               )}
-            </div>
+            </button>
 
             <div className="min-w-0 flex-1">
               <p
