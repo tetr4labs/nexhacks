@@ -84,7 +84,7 @@ Your goal is not just to manage the user's schedule, but to optimize their energ
 
 OPERATIONAL PARAMETERS
 - TONE: Casual, American, conversational, but authoritative on wellness (like a friendly personal trainer).
-- TIME FORMAT: 12-hour clock (2 pm). Only say for example "two pm", don't make it complicated (e.g. no need to include o'clock).
+- TIME FORMAT: 12-hour clock (2 pm). Only say for example "two p m", don't make it complicated (e.g. no need to include o'clock). Remember this is outputted as TTS so should be readable (so include spaces between 'a' and 'm')
 - DATE FORMAT: Natural/Relative.
 
 CORE DIRECTIVES:
@@ -182,6 +182,15 @@ ERROR HANDLING:
         # so DB-backed tools (including Gmail status) start working as soon as the user joins.
         hydrated = await self._ensure_user_and_supabase(max_wait_seconds=10)
         if not hydrated:
+            # Check if it was a specific SIP error
+            sip_error = getattr(self, "_sip_error", None)
+            if sip_error:
+                logger.warning(f"SIP Authentication failed: {sip_error}")
+                await self.session.generate_reply(
+                    instructions=f"Inform the user: {sip_error}"
+                )
+                return
+
             logger.warning(
                 "User not present yet (or missing metadata). Will hydrate DB context when user joins."
             )
@@ -221,24 +230,6 @@ ERROR HANDLING:
         if not user:
             return False
 
-        self.user_id = user.identity
-
-        # Parse token from participant metadata. We set this in `/api/livekit-token` on the frontend.
-        user_token = ""
-        try:
-            if user and user.metadata:
-                data = json.loads(user.metadata)
-                user_token = data.get("supabase_token") or ""
-        except Exception:
-            # Fallback if metadata is just the string
-            user_token = user.metadata if user else ""
-
-        if not user_token:
-            logger.warning(
-                "No Supabase token found in LiveKit participant metadata yet.")
-            self.supabase = None
-            return False
-
         # Repo convention: frontend uses NEXT_PUBLIC_SUPABASE_*.
         # Backend expects SUPABASE_* but we fall back for convenience.
         url = os.environ.get("SUPABASE_URL") or os.environ.get(
@@ -249,29 +240,82 @@ ERROR HANDLING:
         if not url or not key:
             logger.error(
                 "Supabase env vars missing. Set SUPABASE_URL + SUPABASE_ANON_KEY in backend/.env.local "
-                "(or provide NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY)."
             )
             self.supabase = None
             return False
 
-        try:
-            # Create the client scoped to this user
-            self.supabase = create_client(
-                url,  # type: ignore
-                key,  # type: ignore
-                options=ClientOptions(
-                    headers={"Authorization": f"Bearer {user_token}"})
-            )
-        except Exception as e:
-            logger.error(
-                "Couldn't get suprabase bearer token, falling back to global credentials", e)
-            # Fallback to anon key to prevent crash
-            url = os.environ.get("SUPABASE_URL")
-            key = os.environ.get("SUPABASE_ANON_KEY")
-            self.supabase = create_client(url, key)  # type: ignore
+        # Check for SIP identity (phone call)
+        if user.identity.startswith("sip_"):
+            phone = user.identity.replace("sip_", "")
+            logger.info(f"SIP User detected. Phone: {phone}")
 
-        logger.info(
-            f"Supabase client authenticated for user {self.user_id}")
+            # We need the Service Role Key to look up the user by phone (bypassing RLS)
+            # and to act as the user (admin rights) since we don't have their JWT.
+            service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+            if not service_key:
+                logger.error(
+                    "SIP user detected but SUPABASE_SERVICE_ROLE_KEY is missing.")
+                self._sip_error = "System configuration error: Service key missing."
+                return False
+
+            try:
+                # Create admin client
+                # type: ignore
+                admin_client = create_client(url, service_key)
+
+                # Look up user by phone
+                resp = admin_client.table("user_profiles").select(
+                    "id").eq("phone_num", phone).single().execute()
+
+                if resp.data and isinstance(resp.data, dict):
+                    self.user_id = str(resp.data['id'])
+                    # Use admin client as the main client
+                    self.supabase = admin_client
+                    logger.info(f"SIP User authenticated as {self.user_id}")
+                else:
+                    logger.warning(f"No user found for phone {phone}")
+                    self._sip_error = "No account associated with this phone number."
+                    return False
+            except Exception as e:
+                logger.error(f"Error authenticating SIP user: {e}")
+                self._sip_error = "Error verifying account."
+                return False
+
+        else:
+            # Standard WebRTC User
+            self.user_id = user.identity
+
+            # Parse token from participant metadata.
+            user_token = ""
+            try:
+                if user and user.metadata:
+                    data = json.loads(user.metadata)
+                    user_token = data.get("supabase_token") or ""
+            except Exception:
+                user_token = user.metadata if user else ""
+
+            if not user_token:
+                logger.warning(
+                    "No Supabase token found in LiveKit participant metadata yet.")
+                self.supabase = None
+                return False
+
+            try:
+                # Create the client scoped to this user
+                self.supabase = create_client(
+                    url,  # type: ignore
+                    key,  # type: ignore
+                    options=ClientOptions(
+                        headers={"Authorization": f"Bearer {user_token}"})
+                )
+            except Exception as e:
+                logger.error(
+                    "Couldn't get suprabase bearer token, falling back to global credentials", e)
+                # Fallback to anon key
+                self.supabase = create_client(url, key)  # type: ignore
+
+            logger.info(
+                f"Supabase client authenticated for user {self.user_id}")
 
         # Fetch user profile to get timezone
         try:

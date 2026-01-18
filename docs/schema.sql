@@ -5,39 +5,23 @@
 -- with additional profile information for the Tetra app.
 
 -- Create user_profiles table that links to auth.users
-CREATE TABLE IF NOT EXISTS public.user_profiles (
-    -- Primary key matching auth.users id
-    id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
-    
-    -- User's display handle (cyberpunk style username)
-    handle TEXT UNIQUE,
-    
-    -- Timezone for scheduling (e.g., 'America/New_York')
-    timezone TEXT DEFAULT 'UTC',
-    
-    -- Working hours configuration (24-hour format)
-    working_hours_start TIME DEFAULT '09:00:00',
-    working_hours_end TIME DEFAULT '17:00:00',
-    
-    -- Default duration settings (in minutes)
-    default_task_duration INTEGER DEFAULT 30,
-    
-    -- Reminder style preference
-    reminder_style TEXT DEFAULT 'gentle' CHECK (reminder_style IN ('gentle', 'strict')),
-    
-    -- Timestamps
-    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    
-    -- Gmail integration (Arcade MCP)
-    -- Snooze: if set and in the future, UI won't prompt and agent won't attempt Gmail tools
-    gmail_snoozed_until TIMESTAMPTZ NULL,
-    -- Cached connection status from Arcade (authoritative source is Arcade API)
-    gmail_connected BOOLEAN NOT NULL DEFAULT false,
-    -- Token status from Arcade: 'not_started' | 'pending' | 'completed' | 'failed'
-    gmail_token_status TEXT NULL,
-    -- When we last checked Arcade for Gmail auth status
-    gmail_last_checked_at TIMESTAMPTZ NULL
+CREATE TABLE public.user_profiles (
+  id uuid NOT NULL,
+  handle text UNIQUE,
+  timezone text DEFAULT 'UTC'::text,
+  working_hours_start time without time zone DEFAULT '09:00:00'::time without time zone,
+  working_hours_end time without time zone DEFAULT '17:00:00'::time without time zone,
+  default_task_duration integer DEFAULT 30,
+  reminder_style text DEFAULT 'gentle'::text CHECK (reminder_style = ANY (ARRAY['gentle'::text, 'strict'::text])),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  gmail_snoozed_until timestamp with time zone,
+  gmail_connected boolean NOT NULL DEFAULT false,
+  gmail_token_status text,
+  gmail_last_checked_at timestamp with time zone,
+  phone_num text UNIQUE,
+  CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
 );
 
 -- Create index for faster handle lookups
@@ -190,3 +174,7 @@ ALTER TABLE public.user_profiles
 
 -- For new installations, these columns are included in the CREATE TABLE above.
 -- If you're adding to an existing database, run the ALTER TABLE statement above.
+
+
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
