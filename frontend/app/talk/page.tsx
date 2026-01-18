@@ -295,14 +295,14 @@ export default function TalkPage() {
         console.warn("[Dispatch] All dispatch attempts failed, agent may need to join automatically");
         return false;
       };
-      
+
       await dispatchAgentWithRetry();
 
       // Enable microphone after connection
       try {
         await newRoom.localParticipant.setMicrophoneEnabled(true);
         console.log("Microphone enabled");
-        
+
         // Verify microphone track is published
         const micPublication = newRoom.localParticipant.audioTrackPublications.values().next().value;
         if (micPublication) {
@@ -451,7 +451,7 @@ export default function TalkPage() {
             lastEntry &&
             lastEntry.speaker === speaker &&
             lastEntry.text.toLowerCase().trim() ===
-              buffer.text.toLowerCase().trim()
+            buffer.text.toLowerCase().trim()
           ) {
             return null; // Skip duplicate
           }
@@ -639,13 +639,12 @@ export default function TalkPage() {
 
           <div className="flex items-center gap-3">
             <span
-              className={`font-mono text-xs px-3 py-1 rounded border ${
-                isConnected
-                  ? "border-[#22c55e] text-[#22c55e] bg-[#22c55e]/10"
-                  : isConnecting
-                    ? "border-[#fbbf24] text-[#fbbf24] bg-[#fbbf24]/10"
-                    : "border-zinc-700 text-zinc-500"
-              }`}
+              className={`font-mono text-xs px-3 py-1 rounded border ${isConnected
+                ? "border-[#22c55e] text-[#22c55e] bg-[#22c55e]/10"
+                : isConnecting
+                  ? "border-[#fbbf24] text-[#fbbf24] bg-[#fbbf24]/10"
+                  : "border-zinc-700 text-zinc-500"
+                }`}
             >
               {isConnected
                 ? "CONNECTED"
@@ -662,9 +661,8 @@ export default function TalkPage() {
             {/* Tetrahedron icon - pulsing when connected */}
             <div className="mb-8 flex justify-center">
               <div
-                className={`w-32 h-32 relative transition-all duration-300 ${
-                  isConnected ? "animate-pulse" : ""
-                }`}
+                className={`w-32 h-32 relative transition-all duration-300 ${isConnected ? "animate-pulse" : ""
+                  }`}
               >
                 <svg viewBox="0 0 100 100" className="w-full h-full">
                   <polygon
@@ -783,11 +781,10 @@ export default function TalkPage() {
                       >
                         <div className="flex items-center gap-2 mb-1">
                           <span
-                            className={`font-mono text-xs uppercase ${
-                              entry.speaker === "Tetra"
-                                ? "text-[#00ffff]"
-                                : "text-[#ff00ff]"
-                            }`}
+                            className={`font-mono text-xs uppercase ${entry.speaker === "Tetra"
+                              ? "text-[#00ffff]"
+                              : "text-[#ff00ff]"
+                              }`}
                           >
                             {entry.speaker}:
                           </span>

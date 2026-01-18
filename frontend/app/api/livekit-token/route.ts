@@ -45,19 +45,13 @@ export async function GET(request: NextRequest) {
     const roomName = searchParams.get('room') || `room-${user.id}`;
     const participantName = user.email?.split('@')[0] || `user-${user.id}`;
 
-    // Get the JWT from the session to pass to the agent
-    const { data: { session } } = await supabase.auth.getSession();
-    const userJwt = session?.access_token;
-
     console.log("Generating token for user:", user.id);
     console.log("Room:", roomName);
-    console.log("Metadata (JWT length):", userJwt ? userJwt.length : 0);
-    
+
     // Create access token
     const token = new AccessToken(apiKey, apiSecret, {
       identity: user.id,
       name: participantName,
-      metadata: userJwt || undefined,
     });
 
     // Grant permissions

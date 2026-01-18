@@ -15,4 +15,5 @@ dependencies = [
     "livekit-plugins-turn-detector>=1.3.11",  # Add as optional dependency
     "python-dotenv>=1.2.1",
     "supabase>=2.27.2",
+    "livekit-plugins-noise-cancellation>=0.2.5",
 ]
