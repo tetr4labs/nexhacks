@@ -61,13 +61,25 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Explicitly dispatch the agent "tetra" to the room
+    // Explicitly dispatch the agent "Tetra" to the room (must match agent_name in agent.py)
     try {
-      console.log(`Dispatching agent "tetra" to room "${roomName}"...`);
-      const dispatch = await agentClient.createDispatch(roomName, "tetra");
-      console.log("Agent dispatched:", dispatch);
-    } catch (err) {
-      console.error("Error dispatching agent:", err);
+      console.log("=".repeat(60));
+      console.log(`[Trigger Agent] Dispatching agent "Tetra" to room "${roomName}"...`);
+      console.log(`[Trigger Agent] LiveKit URL: ${livekitUrl}`);
+      console.log(`[Trigger Agent] API Key present: ${!!apiKey}`);
+      console.log(`[Trigger Agent] API Secret present: ${!!apiSecret}`);
+      
+      const dispatch = await agentClient.createDispatch(roomName, "Tetra");
+      console.log("[Trigger Agent] Agent dispatch successful!");
+      console.log("[Trigger Agent] Dispatch details:", JSON.stringify(dispatch, null, 2));
+      console.log("=".repeat(60));
+    } catch (err: any) {
+      console.error("=".repeat(60));
+      console.error("[Trigger Agent] ERROR dispatching agent:");
+      console.error("[Trigger Agent] Error message:", err?.message);
+      console.error("[Trigger Agent] Error stack:", err?.stack);
+      console.error("[Trigger Agent] Full error:", err);
+      console.error("=".repeat(60));
       // We don't fail the request here because implicit dispatch might still work
       // or the agent might already be there.
     }

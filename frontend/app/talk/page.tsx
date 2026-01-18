@@ -258,26 +258,45 @@ export default function TalkPage() {
         },
       );
 
-      // Trigger agent to join (create room/job)
-      try {
-        const triggerResponse = await fetch("/api/trigger-agent", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room: roomName }),
-        });
-        if (triggerResponse.ok) {
-          console.log("Agent trigger sent");
-        }
-      } catch (triggerErr) {
-        console.warn(
-          "Could not trigger agent (may join automatically):",
-          triggerErr,
-        );
-      }
-
-      // Connect to room
+      // Connect to room FIRST - ensures participant is in room before agent joins
       await newRoom.connect(url, token);
       console.log("Room connection initiated");
+
+      // Wait a moment for the room to be fully established on LiveKit's side
+      // This helps prevent race conditions where the dispatch happens before the room is ready
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      console.log("Room connection stabilized");
+
+      // Trigger agent to join AFTER we're connected, with retry logic
+      // This ensures the agent will find the participant with JWT metadata
+      const dispatchAgentWithRetry = async (retries = 3, delay = 1000) => {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            console.log(`[Dispatch] Attempt ${attempt}/${retries} to dispatch agent...`);
+            const triggerResponse = await fetch("/api/trigger-agent", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ room: roomName }),
+            });
+            if (triggerResponse.ok) {
+              console.log("[Dispatch] Agent trigger sent successfully");
+              return true;
+            } else {
+              console.warn(`[Dispatch] Attempt ${attempt} failed with status:`, triggerResponse.status);
+            }
+          } catch (triggerErr) {
+            console.warn(`[Dispatch] Attempt ${attempt} failed:`, triggerErr);
+          }
+          // Wait before retrying (except on last attempt)
+          if (attempt < retries) {
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
+        }
+        console.warn("[Dispatch] All dispatch attempts failed, agent may need to join automatically");
+        return false;
+      };
+      
+      await dispatchAgentWithRetry();
 
       // Enable microphone after connection
       try {

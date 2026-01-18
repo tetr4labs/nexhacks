@@ -12,8 +12,19 @@ class TetraTools:
     A collection of tools to manage scheduling and tasks via Supabase.
     """
     def __init__(self, url: str, key: str, user_jwt: str):
-        headers = {"Authorization": f"Bearer {user_jwt}"}
-        self.supabase: Client = create_client(url, key, options={'global': {'headers': headers}})
+        # Create Supabase client with default options
+        self.supabase: Client = create_client(url, key)
+        # Set the user's JWT token for authenticated requests
+        # Use auth.set_session to authenticate the client with the user's token
+        # This allows RLS (Row Level Security) policies to work correctly
+        try:
+            self.supabase.auth.set_session(access_token=user_jwt, refresh_token=user_jwt)
+            logger.info("Successfully set Supabase auth session with user JWT")
+        except Exception as e:
+            logger.error(f"Failed to set Supabase auth session: {e}")
+            # If set_session fails, store JWT for manual header injection if needed
+            self.user_jwt = user_jwt
+            raise
 
     # --- HELPER FOR THE AGENT ---
     @property
