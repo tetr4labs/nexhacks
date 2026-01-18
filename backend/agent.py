@@ -267,7 +267,7 @@ ERROR HANDLING:
                 "owner": self.user_id  # Explicitly set owner to satisfy RLS
             }
 
-            response = self.supabase.table("events").insert(data).select().execute()
+            response = self.supabase.table("events").insert(data).execute()
             
             # Broadcast the change if successful
             if response.data:
@@ -331,7 +331,7 @@ ERROR HANDLING:
                 updates["end"] = end_dt.isoformat()
 
             response = self.supabase.table("events").update(
-                updates).eq("id", event_id).select().execute()
+                updates).eq("id", event_id).execute()
             
             # Broadcast the change
             if response.data:
@@ -374,7 +374,7 @@ ERROR HANDLING:
                 "due": due_iso,
                 "owner": self.user_id  # Explicitly set owner
             }
-            response = self.supabase.table("tasks").insert(data).select().execute()
+            response = self.supabase.table("tasks").insert(data).execute()
             
             # Broadcast change
             if response.data:
@@ -401,7 +401,7 @@ ERROR HANDLING:
                 updates["due"] = due_iso
 
             response = self.supabase.table("tasks").update(
-                updates).eq("id", task_id).select().execute()
+                updates).eq("id", task_id).execute()
 
             # Broadcast change
             if response.data:
@@ -435,7 +435,7 @@ ERROR HANDLING:
         """Mark a task as complete."""
         try:
             response = self.supabase.table("tasks").update(
-                {"done": True}).eq("id", task_id).select().execute()
+                {"done": True}).eq("id", task_id).execute()
             
             # Broadcast change
             if response.data:
@@ -468,7 +468,7 @@ async def entrypoint(ctx: JobContext):
             voice="CwhRBWXzGAHq8TQ4Fs17",
             language="en-US"
         ),
-        turn_detection=MultilingualModel(),
+        # turn_detection=MultilingualModel(), # Disabled to prevent 'language' error
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=True,
     )
