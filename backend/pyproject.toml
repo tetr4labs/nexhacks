@@ -5,5 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.128.0",
+    "livekit>=1.0.23",
+    "livekit-agents~=1.3",  # Removed [turn-detector] extra to make it optional
+    "livekit-plugins-assemblyai>=1.3.11",
+    "livekit-plugins-elevenlabs>=1.3.11",
+    "livekit-plugins-google>=1.3.11",
+    "livekit-plugins-silero>=1.3.11",
+    "livekit-plugins-turn-detector>=1.3.11",  # Add as optional dependency
+    "python-dotenv>=1.2.1",
+    "supabase>=2.27.2",
 ]

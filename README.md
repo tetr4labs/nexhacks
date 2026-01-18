@@ -15,10 +15,10 @@ LIVEKIT_API_SECRET=your_livekit_api_secret
 
 ### LiveKit Agent Environment Variables
 
-Create `livekit-voice-agent/.env.local` with your LiveKit credentials and API keys for:
+Create `backend/.env.local` with your LiveKit credentials and API keys for:
 - AssemblyAI (for STT)
-- OpenAI (for LLM)
-- Cartesia (for TTS)
+- Google AI Studio (for LLM)
+- ElevenLabs (for TTS)
 
 ## Running
 

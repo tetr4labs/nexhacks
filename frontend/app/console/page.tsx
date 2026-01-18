@@ -122,8 +122,8 @@ export default async function ConsolePage() {
           </div>
 
           {/* Center: Talk to Tetra button with tetrahedron */}
-          <Link 
-            href="/talk" 
+          <Link
+            href="/talk"
             className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 group"
           >
             <div className="w-12 h-12 relative group-hover:scale-110 transition-transform duration-300">
@@ -200,16 +200,22 @@ export default async function ConsolePage() {
                 </h2>
                 <div className="space-y-2 text-xs font-mono text-zinc-600">
                   <p className="flex items-center gap-2">
-                    <span className="text-zinc-700">[{formatTime(new Date())}]</span>
+                    <span className="text-zinc-700">
+                      [{formatTime(new Date())}]
+                    </span>
                     <span className="text-[#22c55e]">SESSION_INIT</span>
                   </p>
                   <p className="flex items-center gap-2">
-                    <span className="text-zinc-700">[{formatTime(new Date())}]</span>
+                    <span className="text-zinc-700">
+                      [{formatTime(new Date())}]
+                    </span>
                     <span className="text-zinc-500">Dashboard loaded</span>
                   </p>
                   <p className="flex items-center gap-2">
                     <span className="text-zinc-700">[--:--:--]</span>
-                    <span className="text-zinc-600 italic">Awaiting voice input...</span>
+                    <span className="text-zinc-600 italic">
+                      Awaiting voice input...
+                    </span>
                   </p>
                 </div>
               </div>
@@ -242,7 +248,9 @@ function Timeline({ events }: { events: Event[] }) {
     if (!event.start) return {};
 
     const start = new Date(event.start);
-    const end = event.end ? new Date(event.end) : new Date(start.getTime() + 60 * 60 * 1000);
+    const end = event.end
+      ? new Date(event.end)
+      : new Date(start.getTime() + 60 * 60 * 1000);
 
     // Calculate position from 6 AM baseline
     const startHour = start.getHours() + start.getMinutes() / 60;
@@ -294,7 +302,9 @@ function Timeline({ events }: { events: Event[] }) {
       <div className="absolute top-0 left-16 right-0">
         {events.length === 0 ? (
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center py-12">
-            <p className="text-zinc-600 font-mono text-sm">No events scheduled</p>
+            <p className="text-zinc-600 font-mono text-sm">
+              No events scheduled
+            </p>
             <p className="text-zinc-700 text-xs mt-2">
               Say &quot;Talk to Tetra&quot; to add events
             </p>
