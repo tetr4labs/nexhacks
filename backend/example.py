@@ -20,8 +20,9 @@ def authorize_and_run_tool(tool_name, input, user_id):
     # Tools that do not require authorization will have the status "completed" already.
     if auth_response.status != "completed":
         print(f"Click this link to authorize {tool_name}: {auth_response.url}. The process will continue once you have authorized the app.")
-        client.auth.wait_for_completion(auth_response.id)
- 
+        if auth_response.id:
+            client.auth.wait_for_completion(auth_response.id)
+
     # Run the tool
     return client.tools.execute(tool_name=tool_name, input=input, user_id=user_id)
  
@@ -36,8 +37,8 @@ response_search = authorize_and_run_tool(
 )
  
 # Get the news results from the response
-news = response_search.output.value["news_results"]
- 
+news = getattr(getattr(response_search, "output", None), "value", {}).get("news_results", [])
+
 # Format the news results into a string
 output = "latest news about MCP URL mode elicitation:\n"
 for search_result in news:
@@ -57,9 +58,9 @@ response_create_doc = authorize_and_run_tool(
 )
  
 # Get the Google Doc from the response
-google_doc = response_create_doc.output.value
- 
-email_body = f"You can find the news about MCP URL mode elicitation in the following Google Doc: {google_doc['documentUrl']}"
+google_doc = getattr(getattr(response_create_doc, "output", None), "value", {})
+
+email_body = f"You can find the news about MCP URL mode elicitation in the following Google Doc: {google_doc.get('documentUrl')}"
  
 # Send an email with the link to the Google Doc
 response_send_email = authorize_and_run_tool(
@@ -74,4 +75,4 @@ response_send_email = authorize_and_run_tool(
  
 # Print the response from the tool call
 print(f"Success! Check your email at {user_id}\n\nYou just chained 3 tools together:\n  1. Searched Google News for stories about MCP URL mode elicitation\n  2. Created a Google Doc with the results\n  3. Sent yourself an email with the document link\n\nEmail metadata:")
-print(response_send_email.output.value)
+print(getattr(getattr(response_send_email, "output", None), "value", {}))

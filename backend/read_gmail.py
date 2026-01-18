@@ -48,7 +48,8 @@ def authorize_and_run_tool(
     if getattr(auth, "status", None) != "completed":
         # The user must complete the OAuth consent flow in a browser.
         print(f"\nAuthorize `{tool_name}` by visiting:\n{auth.url}\n")
-        client.auth.wait_for_completion(auth.id)
+        if auth.id:
+            client.auth.wait_for_completion(auth.id)
 
     # Execute the tool call.
     res = client.tools.execute(tool_name=tool_name, input=tool_input, user_id=user_id)

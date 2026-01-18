@@ -23,3 +23,8 @@ dependencies = [
     # Arcade.dev SDK (used by backend/read_gmail.py)
     "arcadepy>=0.1.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.408",
+]

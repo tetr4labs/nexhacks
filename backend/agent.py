@@ -1,6 +1,5 @@
 from arcadepy import Arcade
 from supabase import Client, create_client, ClientOptions
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import (
     noise_cancellation,
     silero,
@@ -21,7 +20,7 @@ from livekit.agents import (
 from livekit import rtc
 from dotenv import load_dotenv
 import base64
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Any
 import logging
 import os
 from dateutil import parser
@@ -48,15 +47,14 @@ class TetraAgent(Agent):
 
         # 1. Identify User
         user = next(iter(self.room.remote_participants.values()), None)
-        self.user_id = user.identity if user else None
+        # These are hydrated in `on_enter`. In practice the agent can enter the room
+        # slightly before the user, so we also lazily hydrate them in tool calls.
+        self.user_id: Optional[str] = user.identity if user else None
         self.user_timezone = ZoneInfo("America/New_York")  # Default to EST
 
         # NOTE: `Agent` already exposes a read-only `.session` property internally.
         # We keep our own reference for convenience without clobbering the base property.
         self._session: Optional[AgentSession] = None
-        # These are hydrated in `on_enter`. In practice the agent can enter the room
-        # slightly before the user, so we also lazily hydrate them in tool calls.
-        self.user_id: Optional[str] = None
         self.supabase: Optional[Client] = None
 
         # Arcade SDK client for direct Gmail tool calls (bypasses MCP timing issues).
@@ -270,14 +268,17 @@ ERROR HANDLING:
         try:
             profile_resp = self.supabase.table("user_profiles").select(
                 "timezone").eq("id", self.user_id).single().execute()
-            if profile_resp.data and profile_resp.data.get("timezone"):
-                tz_str = profile_resp.data.get("timezone")
-                try:
-                    self.user_timezone = ZoneInfo(tz_str)
-                    logger.info(f"User timezone set to {tz_str}")
-                except Exception:
-                    logger.warning(
-                        f"Invalid timezone {tz_str}, falling back to default")
+            data = profile_resp.data
+            if isinstance(data, dict):
+                val = data.get("timezone")
+                if isinstance(val, str):
+                    tz_str = val
+                    try:
+                        self.user_timezone = ZoneInfo(tz_str)
+                        logger.info(f"User timezone set to {tz_str}")
+                    except Exception:
+                        logger.warning(
+                            f"Invalid timezone {tz_str}, falling back to default")
         except Exception as e:
             logger.warning(f"Could not fetch user profile: {e}")
             return False
@@ -327,7 +328,7 @@ ERROR HANDLING:
         and get IDs for events/tasks. Please use the date format YYYY-MM-DD.
         """
         logger.info(f"Fetching context for {date}")
-        if not getattr(self, "supabase", None):
+        if self.supabase is None:
             return (
                 "System Alert: Calendar/task database is not configured for this session. "
                 "I can still help with other tools (like Gmail) if available."
@@ -353,6 +354,9 @@ ERROR HANDLING:
             start_filter = start_utc.isoformat()
             end_filter = end_utc.isoformat()
 
+            # Ensure Supabase is connected (checked above, but for type safety)
+            assert self.supabase is not None
+
             events_response = (
                 self.supabase.table("events")
                 .select("*")
@@ -373,31 +377,39 @@ ERROR HANDLING:
 
             context_str = f"## STATUS REPORT FOR {day_str}\n"
 
-            if not events:
+            if not isinstance(events, list):
                 context_str += "[TIMELINE]: Clear. No fixed events.\n"
             else:
                 context_str += "[TIMELINE]:\n"
                 for e in events:
+                    if not isinstance(e, dict):
+                        continue
                     # Parse UTC time from DB
-                    start_str = e["start"].replace('Z', '+00:00')
+                    start_val = e.get("start")
+                    if not isinstance(start_val, str):
+                        continue
+                    start_str = start_val.replace('Z', '+00:00')
                     dt_utc = datetime.fromisoformat(start_str)
 
                     # Convert to user timezone for display
                     dt_local = dt_utc.astimezone(self.user_timezone)
                     time_str = dt_local.strftime("%H:%M")
 
-                    name = e.get("name", "Untitled")
+                    name = str(e.get("name", "Untitled"))
                     # ADDED ID HERE so the LLM can reference it for updates
-                    context_str += f"- {time_str}: {name} (ID: {e['id']})\n"
+                    context_str += f"- {time_str}: {name} (ID: {e.get('id')})\n"
 
             context_str += "\n[INTENT LEDGER / TASKS]:\n"
-            if not tasks:
+            if not isinstance(tasks, list):
                 context_str += "- No open loops.\n"
             else:
                 for t in tasks:
-                    due = f" (Due: {t['due']})" if t.get("due") else ""
-                    name = t.get("name", "Untitled")
-                    context_str += f"- [ ] {name}{due} (ID: {t['id']})\n"
+                    if not isinstance(t, dict):
+                        continue
+                    due_val = t.get("due")
+                    due = f" (Due: {due_val})" if due_val else ""
+                    name = str(t.get("name", "Untitled"))
+                    context_str += f"- [ ] {name}{due} (ID: {t.get('id')})\n"
 
             return context_str
 
@@ -405,14 +417,20 @@ ERROR HANDLING:
             logger.error(f"Error getting day context: {e}", exc_info=True)
             return f"System Alert: Database connection failed. Details: {str(e)}"
 
-    async def _broadcast_change(self, entity: str, action: str, data: dict):
+    async def _broadcast_change(self, entity: str, action: str, data: Any):
         """Broadcast a change to the room using LiveKit data messages."""
         try:
+            # Helper to handle UUIDs and other non-JSON types
+            def json_default(obj: Any):
+                if isinstance(obj, (datetime,)):
+                    return obj.isoformat()
+                return str(obj)
+
             payload = json.dumps({
                 "type": f"{entity}_update",
                 "action": action,
                 "data": data
-            })
+            }, default=json_default)
             await self.room.local_participant.publish_data(
                 payload.encode("utf-8"),
                 reliable=True
@@ -433,6 +451,8 @@ ERROR HANDLING:
     ):
         """Schedule a new calendar event."""
         logger.info(f"Scheduling: {title}")
+        if self.supabase is None:
+            return "Database not connected."
         try:
             # Parse input time
             # If naive, assume user timezone. If aware, convert to UTC.
@@ -475,6 +495,8 @@ ERROR HANDLING:
     ):
         """Update an existing event. Only provide fields that need changing."""
         logger.info(f"Updating event {event_id}")
+        if self.supabase is None:
+            return "Database not connected."
         try:
             updates = {}
             if title:
@@ -492,22 +514,31 @@ ERROR HANDLING:
                     return "Event not found."
 
                 current_event = curr.data[0]
+                if not isinstance(current_event, dict):
+                    return "Event data format error."
 
                 # Determine base start time
-                new_start = start_iso if start_iso else current_event["start"]
+                start_val = current_event.get("start")
+                if not isinstance(start_val, str):
+                    return "Event start time missing."
+
+                new_start = start_iso if start_iso else start_val
                 start_dt = datetime.fromisoformat(
                     new_start.replace('Z', '+00:00'))
 
                 # Determine duration
+                minutes: float = 60.0
                 if duration_minutes:
-                    minutes = duration_minutes
+                    minutes = float(duration_minutes)
                 else:
                     # Calculate previous duration
-                    old_start = datetime.fromisoformat(
-                        current_event["start"].replace('Z', '+00:00'))
-                    old_end = datetime.fromisoformat(
-                        current_event["end"].replace('Z', '+00:00'))
-                    minutes = (old_end - old_start).total_seconds() / 60
+                    end_val = current_event.get("end")
+                    if isinstance(start_val, str) and isinstance(end_val, str):
+                        old_start = datetime.fromisoformat(
+                            start_val.replace('Z', '+00:00'))
+                        old_end = datetime.fromisoformat(
+                            end_val.replace('Z', '+00:00'))
+                        minutes = (old_end - old_start).total_seconds() / 60
 
                 end_dt = start_dt + timedelta(minutes=minutes)
 
@@ -533,6 +564,8 @@ ERROR HANDLING:
     ):
         """Remove an event from the calendar."""
         logger.info(f"Deleting event {event_id}")
+        if self.supabase is None:
+            return "Database not connected."
         try:
             self.supabase.table("events").delete().eq("id", event_id).execute()
             # Broadcast just the ID for deletion
@@ -551,6 +584,8 @@ ERROR HANDLING:
         due_iso: Annotated[Optional[str], "Optional due date ISO"] = None
     ):
         """Log a new task."""
+        if self.supabase is None:
+            return "Database not connected."
         try:
             data = {
                 "name": name,
@@ -577,6 +612,8 @@ ERROR HANDLING:
         due_iso: Annotated[Optional[str], "New due date"] = None
     ):
         """Update a task's details."""
+        if self.supabase is None:
+            return "Database not connected."
         try:
             updates = {}
             if name:
@@ -602,6 +639,8 @@ ERROR HANDLING:
         task_id: Annotated[int, "The ID of the task"]
     ):
         """Permanently delete a task."""
+        if self.supabase is None:
+            return "Database not connected."
         try:
             self.supabase.table("tasks").delete().eq("id", task_id).execute()
             # Broadcast ID for deletion
@@ -617,6 +656,8 @@ ERROR HANDLING:
         task_id: Annotated[int, "The numerical ID of the task"]
     ):
         """Mark a task as complete."""
+        if self.supabase is None:
+            return "Database not connected."
         try:
             response = self.supabase.table("tasks").update(
                 {"done": True}).eq("id", task_id).execute()
@@ -657,11 +698,12 @@ ERROR HANDLING:
 
         # Ensure Supabase is hydrated. This avoids the "agent joined before user" race.
         hydrated = await self._ensure_user_and_supabase(max_wait_seconds=3)
-        if not hydrated or not getattr(self, "supabase", None) or not getattr(self, "user_id", None):
+        if not hydrated or self.supabase is None or self.user_id is None:
             # Cache as unknown so we don't retry immediately.
             self._gmail_state_cache = {"state": "unknown", "checked_at": now}
             return self._format_gmail_state_response("unknown")
 
+        assert self.supabase is not None
         try:
             # Query user profile for gmail_snoozed_until and gmail_connected.
             response = (
@@ -673,14 +715,15 @@ ERROR HANDLING:
             )
 
             profile = response.data
-            if not profile:
+            if not isinstance(profile, dict):
                 # No profile row yet - treat as not connected.
                 self._gmail_state_cache = {
                     "state": "not_connected", "checked_at": now}
                 return self._format_gmail_state_response("not_connected")
 
-            snoozed_until = profile.get("gmail_snoozed_until")
-            is_connected = profile.get("gmail_connected", False)
+            snoozed_until = str(profile.get("gmail_snoozed_until")) if profile.get(
+                "gmail_snoozed_until") else None
+            is_connected = bool(profile.get("gmail_connected", False))
 
             # Check if snooze is currently active.
             if snoozed_until:
@@ -839,8 +882,8 @@ ERROR HANDLING:
                 return output
 
             # Fallback: check if there's an error or return raw response.
-            if hasattr(res, "error") and res.error:
-                return {"error": str(res.error)}
+            if hasattr(res, "error") and getattr(res, "error"):  # type: ignore
+                return {"error": str(getattr(res, "error"))}  # type: ignore
 
             return {"result": str(res)}
 
@@ -882,7 +925,7 @@ ERROR HANDLING:
 
         # Format emails for voice output (keep it concise).
         emails = result.get("emails") if isinstance(result, dict) else None
-        if not emails:
+        if not isinstance(emails, list):
             return "No emails found or unable to retrieve emails."
 
         # Build a voice-friendly summary.
@@ -894,7 +937,7 @@ ERROR HANDLING:
                 "sender") or "Unknown sender"
             subject = email.get("subject") or "(no subject)"
             # Truncate long subjects for voice.
-            if len(subject) > 60:
+            if isinstance(subject, str) and len(subject) > 60:
                 subject = subject[:57] + "..."
             summary_parts.append(f"{i}. From {sender}: {subject}")
 
@@ -921,7 +964,7 @@ ERROR HANDLING:
             f"Searching emails: sender={sender}, subject={subject}, limit={limit}")
 
         # Build tool input.
-        tool_input = {"limit": max(1, min(20, limit))}
+        tool_input: dict[str, Any] = {"limit": max(1, min(20, limit))}
         if sender:
             tool_input["sender"] = sender
         if subject:
