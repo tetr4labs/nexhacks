@@ -1,0 +1,1283 @@
+"use client";
+
+/**
+ * ConsoleClient.tsx
+ * 
+ * This is the main client-side wrapper for the /console page.
+ * We split this from the server component (page.tsx) because:
+ * - Server components handle auth + data fetching (Supabase queries)
+ * - Client components handle interactivity (LiveKit connection, UI state, audio playback)
+ * 
+ * The tetrahedron CTA in the header starts the voice connection when clicked,
+ * which also expands the transcript panel on the right side.
+ */
+
+import { useEffect, useState, useRef, useCallback } from "react";
+import {
+  Room,
+  RoomEvent,
+  RemoteParticipant,
+  Track,
+  RemoteTrack,
+  RemoteTrackPublication,
+  DataPacket_Kind,
+} from "livekit-client";
+import Image from "next/image";
+import ImportButton from "./ImportButton";
+import EventCard from "./EventCard";
+import DayNavigator from "./DayNavigator";
+import TimezoneDisplay from "./TimezoneDisplay";
+
+// =============================================
+// Type definitions for props passed from server
+// =============================================
+
+interface Event {
+  id: number;
+  name: string | null;
+  description: string | null;
+  start: string | null;
+  end: string | null;
+}
+
+interface Task {
+  id: number;
+  name: string | null;
+  description: string | null;
+  due: string | null;
+  done: boolean | null;
+}
+
+interface ConsoleClientProps {
+  userHandle: string;
+  selectedDayString: string;
+  selectedDay: Date;
+  isToday: boolean;
+  events: Event[];
+  dayTasks: Task[];
+  profileTimezone: string | null | undefined;
+}
+
+// =============================================
+// Main ConsoleClient component
+// =============================================
+
+export default function ConsoleClient({
+  userHandle,
+  selectedDayString,
+  selectedDay,
+  isToday,
+  events,
+  dayTasks,
+  profileTimezone,
+}: ConsoleClientProps) {
+  // =============================================
+  // Transcript/Voice panel state
+  // =============================================
+  
+  // Controls whether the transcript column is visible (collapsed by default)
+  const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
+
+  // Session start time - initialized client-side to avoid hydration mismatch
+  // (server renders one timestamp, client hydrates with another causing errors)
+  const [sessionTime, setSessionTime] = useState<string>("--:--:--");
+  
+  // Set the session time after hydration to avoid mismatch
+  useEffect(() => {
+    setSessionTime(formatTime(new Date()));
+  }, []);
+  
+  // =============================================
+  // LiveKit connection state (ported from /talk)
+  // =============================================
+  
+  const [room, setRoom] = useState<Room | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<
+    Array<{ speaker: string; text: string; timestamp: Date }>
+  >([]);
+  const [participants, setParticipants] = useState<string[]>([]);
+  const [isWaitingForAgent, setIsWaitingForAgent] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  // Transcript buffering and debouncing refs
+  const transcriptBufferRef = useRef<
+    Map<string, { text: string; timestamp: Date; timer: NodeJS.Timeout | null }>
+  >(new Map());
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // =============================================
+  // Transcript handling functions (ported from /talk)
+  // =============================================
+
+  // Simple similarity calculation (Jaccard similarity on words)
+  // Used to detect duplicate transcript entries
+  const calculateSimilarity = useCallback(
+    (text1: string, text2: string): number => {
+      const words1 = new Set(text1.toLowerCase().trim().split(/\s+/));
+      const words2 = new Set(text2.toLowerCase().trim().split(/\s+/));
+
+      const intersection = new Set([...words1].filter((x) => words2.has(x)));
+      const union = new Set([...words1, ...words2]);
+
+      return intersection.size / union.size;
+    },
+    [],
+  );
+
+  // Commit buffered transcripts to the main transcript array
+  // Only commits after a pause in speech (debounced)
+  const commitBufferedTranscripts = useCallback(() => {
+    const buffers = Array.from(transcriptBufferRef.current.entries());
+
+    if (buffers.length === 0) {
+      return;
+    }
+
+    setTranscript((prev) => {
+      // Get the last entry to check for duplicates
+      const lastEntry = prev.length > 0 ? prev[prev.length - 1] : null;
+
+      // Process each buffered transcript
+      const newEntries = buffers
+        .map(([speaker, buffer]) => {
+          // Check if this is a duplicate of the last entry
+          if (
+            lastEntry &&
+            lastEntry.speaker === speaker &&
+            lastEntry.text.toLowerCase().trim() ===
+            buffer.text.toLowerCase().trim()
+          ) {
+            return null; // Skip duplicate
+          }
+
+          // Check if this is very similar to the last entry (fuzzy duplicate)
+          if (lastEntry && lastEntry.speaker === speaker) {
+            const similarity = calculateSimilarity(lastEntry.text, buffer.text);
+            if (similarity > 0.85) {
+              // 85% similar = likely duplicate
+              return null;
+            }
+          }
+
+          return {
+            speaker,
+            text: buffer.text,
+            timestamp: buffer.timestamp,
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is { speaker: string; text: string; timestamp: Date } =>
+            entry !== null,
+        );
+
+      // Clear the buffers
+      transcriptBufferRef.current.clear();
+
+      // Return updated transcript
+      return [...prev, ...newEntries];
+    });
+  }, [calculateSimilarity]);
+
+  // Add transcript entry with buffering and debouncing
+  // This prevents duplicate entries and waits until the user is done speaking
+  const addTranscript = useCallback(
+    (speaker: string, text: string) => {
+      // Normalize speaker name
+      const normalizedSpeaker =
+        speaker === "agent" || speaker.includes("agent") ? "Tetra" : "You";
+
+      // Skip empty or very short text
+      if (!text || text.trim().length < 2) {
+        return;
+      }
+
+      // Get or create buffer entry for this speaker
+      const bufferKey = normalizedSpeaker;
+      const existingBuffer = transcriptBufferRef.current.get(bufferKey);
+
+      // Check if this is a duplicate or very similar to existing text
+      if (existingBuffer) {
+        const existingText = existingBuffer.text.toLowerCase().trim();
+        const newText = text.toLowerCase().trim();
+
+        // If the new text is contained in existing text, skip it
+        if (
+          existingText.includes(newText) &&
+          existingText.length > newText.length
+        ) {
+          return;
+        }
+
+        // If existing text is contained in new text, replace it
+        if (
+          newText.includes(existingText) &&
+          newText.length > existingText.length
+        ) {
+          transcriptBufferRef.current.set(bufferKey, {
+            text: text.trim(),
+            timestamp: existingBuffer.timestamp,
+            timer: existingBuffer.timer,
+          });
+        } else {
+          // Merge texts if they're different (partial updates)
+          const timeDiff = Date.now() - existingBuffer.timestamp.getTime();
+          if (timeDiff < 3000) {
+            const existingWords = existingText.split(/\s+/);
+            const newWords = newText.split(/\s+/);
+            const additionalWords = newWords.filter(
+              (word) => word.length > 0 && !existingWords.includes(word),
+            );
+
+            if (additionalWords.length > 0) {
+              transcriptBufferRef.current.set(bufferKey, {
+                text: existingBuffer.text + " " + additionalWords.join(" "),
+                timestamp: existingBuffer.timestamp,
+                timer: existingBuffer.timer,
+              });
+            }
+          } else {
+            transcriptBufferRef.current.set(bufferKey, {
+              text: text.trim(),
+              timestamp: new Date(),
+              timer: null,
+            });
+          }
+        }
+      } else {
+        // New buffer entry
+        transcriptBufferRef.current.set(bufferKey, {
+          text: text.trim(),
+          timestamp: new Date(),
+          timer: null,
+        });
+      }
+
+      // Clear existing debounce timer
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+
+      // Set new debounce timer - wait 1.5 seconds of silence before committing
+      debounceTimeoutRef.current = setTimeout(() => {
+        commitBufferedTranscripts();
+      }, 1500);
+    },
+    [commitBufferedTranscripts],
+  );
+
+  // =============================================
+  // Audio track handling (ported from /talk)
+  // =============================================
+
+  const handleTrack = useCallback((track: RemoteTrack, participantIdentity: string) => {
+    if (track.kind === Track.Kind.Audio) {
+      console.log("Handling audio track from:", participantIdentity, track);
+
+      if (!audioRef.current) {
+        console.error("Audio element not available");
+        return;
+      }
+
+      // Stop any existing tracks
+      if (audioRef.current.srcObject) {
+        const existingStream = audioRef.current.srcObject as MediaStream;
+        existingStream.getTracks().forEach((t) => {
+          t.stop();
+          existingStream.removeTrack(t);
+        });
+      }
+
+      // Create new media stream and attach track
+      const stream = new MediaStream();
+      if (track.mediaStreamTrack) {
+        stream.addTrack(track.mediaStreamTrack);
+        audioRef.current.srcObject = stream;
+
+        // Ensure audio element is ready
+        audioRef.current.volume = 1.0;
+        audioRef.current.muted = false;
+
+        // Play audio with error handling
+        const playPromise = audioRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              console.log(
+                "Audio track playing successfully from:",
+                participantIdentity,
+              );
+            })
+            .catch((err) => {
+              console.error("Error playing audio:", err);
+              if (err.name === "NotAllowedError") {
+                setError(
+                  "Please allow audio playback in your browser settings",
+                );
+              }
+            });
+        }
+      } else {
+        console.warn("Track has no mediaStreamTrack:", track);
+      }
+    }
+  }, []);
+
+  // =============================================
+  // LiveKit connection function (ported from /talk)
+  // This is triggered when the user clicks "Talk to Tetra" or the tetrahedron
+  // =============================================
+
+  const connectToRoom = useCallback(async () => {
+    if (isConnecting || isConnected) return;
+
+    setIsConnecting(true);
+    setError(null);
+
+    try {
+      // Get access token from API
+      const response = await fetch("/api/livekit-token");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to get access token");
+      }
+
+      const { token, url, room: roomName } = await response.json();
+      console.log("Connecting to room:", roomName);
+
+      // Import LiveKit client dynamically (client-side only)
+      const { Room } = await import("livekit-client");
+
+      // Create room instance
+      const newRoom = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+      });
+
+      // Helper to cleanup duplicate agents
+      const cleanupDuplicateAgents = async (currentRoom: Room) => {
+        const agents = Array.from(currentRoom.remoteParticipants.values())
+          .filter(p => p.identity === "agent" || p.identity.includes("agent") || p.identity === "Tetra");
+
+        if (agents.length > 1) {
+          console.log("Found multiple agents, cleaning up...", agents.map(a => a.identity));
+
+          const sortedAgents = agents.sort((a, b) => {
+            const timeA = a.joinedAt?.getTime() || 0;
+            const timeB = b.joinedAt?.getTime() || 0;
+            return timeA - timeB;
+          });
+
+          const agentsToRemove = sortedAgents.slice(0, sortedAgents.length - 1);
+
+          for (const agent of agentsToRemove) {
+            console.log("Removing duplicate agent:", agent.identity);
+            try {
+              await fetch("/api/kick-participant", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ room: currentRoom.name, identity: agent.identity }),
+              });
+            } catch (err) {
+              console.error("Failed to remove agent:", err);
+            }
+          }
+        }
+      };
+
+      // Set up event listeners
+      newRoom.on(RoomEvent.Connected, () => {
+        console.log("Connected to room:", newRoom.name);
+        setIsConnected(true);
+        setIsConnecting(false);
+
+        cleanupDuplicateAgents(newRoom);
+
+        const allParticipants = Array.from(newRoom.remoteParticipants.values());
+        console.log(
+          "Remote participants:",
+          allParticipants.map((p) => p.identity),
+        );
+        setParticipants(allParticipants.map((p) => p.identity));
+
+        if (allParticipants.length > 0) {
+          setError(null);
+          setIsWaitingForAgent(false);
+        } else {
+          setIsWaitingForAgent(true);
+        }
+      });
+
+      newRoom.on(RoomEvent.Disconnected, (reason) => {
+        console.log("Disconnected from room:", reason);
+        setIsConnected(false);
+        setRoom(null);
+        setParticipants([]);
+        setIsWaitingForAgent(false);
+        if (audioContextRef.current) {
+          audioContextRef.current.close();
+          audioContextRef.current = null;
+        }
+      });
+
+      newRoom.on(
+        RoomEvent.ParticipantConnected,
+        (participant: RemoteParticipant) => {
+          console.log(
+            "Participant connected:",
+            participant.identity,
+            participant,
+          );
+
+          cleanupDuplicateAgents(newRoom);
+
+          setParticipants((prev) => {
+            const updated = [...prev, participant.identity];
+            if (updated.length > 0) {
+              setError(null);
+              setIsWaitingForAgent(false);
+            }
+            return updated;
+          });
+
+          // Set up track listeners for this participant
+          participant.on(
+            RoomEvent.TrackSubscribed,
+            (track: RemoteTrack, publication: RemoteTrackPublication) => {
+              console.log(
+                "Track subscribed:",
+                track.kind,
+                publication.trackSid,
+                "from",
+                participant.identity,
+              );
+              handleTrack(track, participant.identity);
+            },
+          );
+
+          // Check for existing tracks
+          participant.trackPublications.forEach((publication) => {
+            if (publication.track) {
+              console.log(
+                "Existing track:",
+                publication.kind,
+                publication.trackSid,
+              );
+              handleTrack(
+                publication.track as RemoteTrack,
+                participant.identity,
+              );
+            }
+          });
+        },
+      );
+
+      newRoom.on(
+        RoomEvent.ParticipantDisconnected,
+        (participant: RemoteParticipant) => {
+          console.log("Participant disconnected:", participant.identity);
+          setParticipants((prev) =>
+            prev.filter((id) => id !== participant.identity),
+          );
+        },
+      );
+
+      // Handle data messages (for transcripts)
+      newRoom.on(
+        RoomEvent.DataReceived,
+        (
+          payload: Uint8Array,
+          participant?: RemoteParticipant,
+          kind?: DataPacket_Kind,
+        ) => {
+          try {
+            const text = new TextDecoder().decode(payload);
+            console.log("Data received:", text, "from", participant?.identity);
+
+            try {
+              const data = JSON.parse(text);
+              if (data.text || data.transcript) {
+                addTranscript(
+                  participant?.identity || "system",
+                  data.text || data.transcript,
+                );
+              }
+            } catch {
+              addTranscript(participant?.identity || "system", text);
+            }
+          } catch (err) {
+            console.error("Error processing data:", err);
+          }
+        },
+      );
+
+      // Register text stream handler for transcripts
+      try {
+        newRoom.registerTextStreamHandler(
+          "lk.transcription",
+          async (reader, participantInfo) => {
+            console.log("Text stream handler registered for transcription");
+            try {
+              const text = await reader.readAll();
+              console.log(
+                "Transcript received:",
+                text,
+                "from",
+                participantInfo?.identity,
+              );
+              if (text) {
+                addTranscript(participantInfo?.identity || "system", text);
+              }
+            } catch (err) {
+              console.error("Error reading transcript stream:", err);
+            }
+          },
+        );
+      } catch (err) {
+        console.warn(
+          "Could not register text stream handler (may not be available in this version):",
+          err,
+        );
+      }
+
+      // Also listen for transcription events if available
+      newRoom.on(RoomEvent.TranscriptionReceived, (transcription: any) => {
+        console.log("Transcription event received:", transcription);
+        if (transcription.text) {
+          addTranscript(
+            transcription.participant?.identity || "system",
+            transcription.text,
+          );
+        }
+      });
+
+      // Handle local track published
+      newRoom.localParticipant.on(RoomEvent.TrackPublished, (publication) => {
+        console.log(
+          "Local track published:",
+          publication.kind,
+          publication.trackSid,
+        );
+      });
+
+      // Listen for all track subscriptions
+      newRoom.on(
+        RoomEvent.TrackSubscribed,
+        (
+          track: RemoteTrack,
+          publication: RemoteTrackPublication,
+          participant: RemoteParticipant,
+        ) => {
+          console.log(
+            "Track subscribed event:",
+            track.kind,
+            "from",
+            participant.identity,
+          );
+          handleTrack(track, participant.identity);
+        },
+      );
+
+      // Connect to room FIRST
+      await newRoom.connect(url, token);
+      console.log("Room connection initiated");
+
+      // Wait a moment for the room to be fully established
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      console.log("Room connection stabilized");
+
+      // Trigger agent to join AFTER we're connected, with retry logic
+      const dispatchAgentWithRetry = async (retries = 3, delay = 1000) => {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            console.log(`[Dispatch] Attempt ${attempt}/${retries} to dispatch agent...`);
+            const triggerResponse = await fetch("/api/trigger-agent", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ room: roomName }),
+            });
+            if (triggerResponse.ok) {
+              console.log("[Dispatch] Agent trigger sent successfully");
+              return true;
+            } else {
+              console.warn(`[Dispatch] Attempt ${attempt} failed with status:`, triggerResponse.status);
+            }
+          } catch (triggerErr) {
+            console.warn(`[Dispatch] Attempt ${attempt} failed:`, triggerErr);
+          }
+          if (attempt < retries) {
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
+        }
+        console.warn("[Dispatch] All dispatch attempts failed, agent may need to join automatically");
+        return false;
+      };
+
+      await dispatchAgentWithRetry();
+
+      // Enable microphone after connection
+      try {
+        await newRoom.localParticipant.setMicrophoneEnabled(true);
+        console.log("Microphone enabled");
+
+        const micPublication = newRoom.localParticipant.audioTrackPublications.values().next().value;
+        if (micPublication) {
+          console.log("Microphone track published:", micPublication.trackSid);
+        } else {
+          console.warn("Microphone track not found after enabling");
+        }
+      } catch (micError) {
+        console.error("Failed to enable microphone:", micError);
+        setError("Failed to enable microphone. Please check permissions.");
+      }
+
+      setRoom(newRoom);
+
+      // Periodically check for agent
+      let checkCount = 0;
+      const maxChecks = 5;
+      const checkInterval = setInterval(() => {
+        checkCount++;
+
+        if (newRoom.state === "connected") {
+          const allParticipants = Array.from(
+            newRoom.remoteParticipants.values(),
+          );
+          console.log(
+            `[Check ${checkCount}/${maxChecks}] Participants:`,
+            allParticipants.map((p) => p.identity),
+          );
+
+          if (allParticipants.length > 0) {
+            setError(null);
+            setIsWaitingForAgent(false);
+            clearInterval(checkInterval);
+          } else if (checkCount >= maxChecks) {
+            console.warn("Agent not detected after waiting period");
+            setIsWaitingForAgent(true);
+            clearInterval(checkInterval);
+          }
+        } else {
+          clearInterval(checkInterval);
+        }
+      }, 2000);
+    } catch (err) {
+      console.error("Connection error:", err);
+      setError(err instanceof Error ? err.message : "Failed to connect");
+      setIsConnecting(false);
+    }
+  }, [isConnecting, isConnected, handleTrack, addTranscript]);
+
+  // =============================================
+  // Disconnect from room
+  // =============================================
+
+  const disconnect = useCallback(async () => {
+    if (room) {
+      room.disconnect();
+      setRoom(null);
+      setIsConnected(false);
+      setTranscript([]);
+    }
+  }, [room]);
+
+  // =============================================
+  // Main CTA handler: opens transcript panel AND starts connection
+  // =============================================
+
+  const startTalking = useCallback(() => {
+    // Open the transcript panel first (so user sees feedback immediately)
+    setIsTranscriptOpen(true);
+    // Then initiate the LiveKit connection
+    connectToRoom();
+  }, [connectToRoom]);
+
+  // =============================================
+  // Cleanup on unmount
+  // =============================================
+
+  useEffect(() => {
+    return () => {
+      if (room) {
+        room.disconnect();
+      }
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+      commitBufferedTranscripts();
+      transcriptBufferRef.current.forEach((buffer) => {
+        if (buffer.timer) {
+          clearTimeout(buffer.timer);
+        }
+      });
+    };
+  }, [room, commitBufferedTranscripts]);
+
+  // =============================================
+  // Render
+  // =============================================
+
+  return (
+    <div className="relative h-screen bg-black cyber-grid overflow-hidden">
+      {/* High contrast grid overlay */}
+      <div className="absolute inset-0 pointer-events-none opacity-30">
+        <div className="absolute inset-0" style={{
+          backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(255,255,255,0.1) 39px, rgba(255,255,255,0.1) 40px),
+                           repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(255,255,255,0.1) 39px, rgba(255,255,255,0.1) 40px)`
+        }} />
+      </div>
+
+      {/* Main content */}
+      <div className="relative z-10 flex flex-col h-full min-h-0">
+        {/* Header - angular borders */}
+        <header className="flex items-center justify-between px-6 pt-4 pb-8 md:px-12 md:pt-6 md:pb-10 border-b-2 border-white">
+          {/* Logo and branding */}
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 relative border-2 border-white">
+              <Image
+                src="/tetra.png"
+                alt="Tetra Logo"
+                width={40}
+                height={40}
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <div className="flex flex-col">
+              <span className="font-mono text-lg font-bold text-white tracking-[0.2em] uppercase">
+                TETRA OS
+              </span>
+              <span className="font-mono text-xs text-white opacity-60">
+                v0.1.0 // {userHandle}
+              </span>
+            </div>
+          </div>
+
+          {/* Center: Talk to Tetra button - clicking this starts the voice connection */}
+          <button
+            onClick={startTalking}
+            disabled={isConnecting}
+            className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 group pt-12 pb-4 cursor-pointer disabled:cursor-wait"
+            style={{ color: 'rgb(253, 247, 228)' }}
+          >
+            {/* Tetrahedron icon with glow effect */}
+            <div className={`w-12 h-12 relative group-hover:scale-110 transition-transform duration-300 ${isConnected ? 'tetra-glow-active' : 'tetra-glow'}`}>
+              <TetrahedronIcon isConnected={isConnected} />
+            </div>
+            <span className="font-mono text-xs uppercase tracking-[0.2em] opacity-90 group-hover:opacity-100 transition-opacity">
+              {isConnecting ? "Connecting..." : isConnected ? "Connected" : "Talk to Tetra"}
+            </span>
+          </button>
+
+          {/* Right: Import button with modal */}
+          <div className="flex items-center gap-3">
+            <ImportButton />
+          </div>
+        </header>
+
+        {/* Status bar - high contrast */}
+        <div className="px-6 py-3 md:px-12 border-b-2 border-white bg-black">
+          <div className="flex items-center gap-4 text-xs font-mono text-white">
+            <span className="flex items-center gap-2">
+              <span className={`w-2 h-2 ${isConnected ? 'bg-green-400' : 'bg-white'}`} />
+              {isConnected ? "AGENT CONNECTED" : "SYSTEM ONLINE"}
+            </span>
+            <span className="opacity-50">|</span>
+            <span className="uppercase tracking-wider">
+              {selectedDay.toLocaleDateString("en-US", {
+                weekday: "long",
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              }).toUpperCase()}
+            </span>
+            <span className="opacity-50">|</span>
+            <span className="opacity-80">
+              {events?.length || 0} EVENTS • {dayTasks.length} TASKS
+            </span>
+          </div>
+        </div>
+
+        {/* Main dashboard content */}
+        <main className="flex-1 p-8 md:p-12 min-h-0 overflow-hidden">
+          {/* 
+            Layout grid:
+            - When transcript is closed: 2 equal columns (calendar + tasks)
+            - When transcript is open: 2fr 2fr 1fr (calendar + tasks + transcript)
+            - Mobile: stacks vertically
+          */}
+          <div 
+            className={`grid gap-8 h-full min-h-0 max-w-[1800px] mx-auto ${
+              isTranscriptOpen 
+                ? 'grid-cols-1 lg:grid-cols-[2fr_2fr_1fr]' 
+                : 'grid-cols-1 lg:grid-cols-2'
+            }`}
+          >
+            {/* Timeline Panel (Calendar) */}
+            <div className="glass-panel p-8 flex flex-col border-2 border-white min-h-0">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-4">
+                  <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white">
+                    TIMELINE
+                  </h2>
+                  <DayNavigator currentDay={selectedDayString} />
+                </div>
+                <TimezoneDisplay profileTimezone={profileTimezone} />
+              </div>
+
+              {/* Timeline view */}
+              <div className="flex-1 min-h-0">
+                <Timeline events={events || []} showCurrentTime={isToday} />
+              </div>
+            </div>
+
+            {/* Tasks + System Feed Panel (middle column) */}
+            <div className="flex flex-col gap-8 min-h-0">
+              {/* Tasks Panel */}
+              <div className="glass-panel p-8 flex-1 border-2 border-white min-h-0">
+                <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white mb-6">
+                  TASKS
+                </h2>
+                <TasksList tasks={dayTasks} />
+              </div>
+
+              {/* System Feed Panel - kept under tasks as requested */}
+              <div className="glass-panel p-8 h-48 border-2 border-white">
+                <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white opacity-60 mb-6">
+                  SYSTEM FEED
+                </h2>
+                <div className="space-y-2 text-xs font-mono text-white opacity-80">
+                  <p className="flex items-center gap-2">
+                    <span className="opacity-50">
+                      [{sessionTime}]
+                    </span>
+                    <span className="text-white">SESSION_INIT</span>
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <span className="opacity-50">
+                      [{sessionTime}]
+                    </span>
+                    <span className="opacity-70">Dashboard loaded</span>
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <span className="opacity-50">[--:--:--]</span>
+                    <span className="opacity-60 italic">
+                      {isConnected ? "Voice agent active" : "Awaiting voice input..."}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Transcript/Voice Panel (right column) - only shown when open */}
+            {isTranscriptOpen && (
+              <div className="glass-panel p-6 flex flex-col border-2 border-white min-h-0 animate-fade-in">
+                {/* Header with controls */}
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-white">
+                    TRANSCRIPT
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    {/* Connection status indicator */}
+                    <span
+                      className={`font-mono text-xs px-2 py-1 border ${
+                        isConnected
+                          ? "border-green-500 text-green-400 bg-green-500/10"
+                          : isConnecting
+                            ? "border-yellow-500 text-yellow-400 bg-yellow-500/10"
+                            : "border-zinc-700 text-zinc-500"
+                      }`}
+                    >
+                      {isConnected
+                        ? "LIVE"
+                        : isConnecting
+                          ? "..."
+                          : "OFF"}
+                    </span>
+                    {/* Collapse button */}
+                    <button
+                      onClick={() => setIsTranscriptOpen(false)}
+                      className="text-white/60 hover:text-white transition-colors p-1"
+                      aria-label="Collapse transcript"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Error display */}
+                {error && (
+                  <div className="text-red-400 font-mono text-xs mb-4 p-2 border border-red-500/30 bg-red-500/10">
+                    {error}
+                  </div>
+                )}
+
+                {/* Waiting for agent indicator */}
+                {isConnected && isWaitingForAgent && participants.length === 0 && (
+                  <p className="text-yellow-400 font-mono text-xs mb-4 animate-pulse">
+                    ⏳ Waiting for agent to join...
+                  </p>
+                )}
+
+                {/* Connect/Disconnect controls */}
+                <div className="mb-4">
+                  {!isConnected && !isConnecting ? (
+                    <button
+                      onClick={connectToRoom}
+                      className="btn-neon-primary text-xs w-full py-2"
+                    >
+                      Connect
+                    </button>
+                  ) : isConnecting ? (
+                    <button
+                      disabled
+                      className="btn-neon-secondary text-xs w-full py-2 opacity-50 cursor-not-allowed"
+                    >
+                      Connecting...
+                    </button>
+                  ) : (
+                    <button
+                      onClick={disconnect}
+                      className="btn-neon-secondary text-xs w-full py-2"
+                    >
+                      Disconnect
+                    </button>
+                  )}
+                </div>
+
+                {/* Participants info */}
+                {isConnected && participants.length > 0 && (
+                  <div className="mb-4 text-xs font-mono text-zinc-500">
+                    Active: {participants.join(", ")}
+                  </div>
+                )}
+
+                {/* Transcript list */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                  {transcript.length === 0 ? (
+                    <p className="text-zinc-600 font-mono text-xs italic">
+                      {isConnected 
+                        ? "Waiting for conversation..." 
+                        : "Click Connect to start"}
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {transcript.map((entry, i) => (
+                        <div
+                          key={i}
+                          className="border-l-2 border-white/30 pl-3"
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <span
+                              className={`font-mono text-xs uppercase ${
+                                entry.speaker === "Tetra"
+                                  ? "text-cyan-400"
+                                  : "text-fuchsia-400"
+                              }`}
+                            >
+                              {entry.speaker}:
+                            </span>
+                            <span className="text-xs text-zinc-600">
+                              {entry.timestamp.toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <p className="text-zinc-300 font-mono text-xs">
+                            {entry.text}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </main>
+
+        {/* Footer - angular */}
+        <footer className="px-6 py-4 md:px-12 border-t-2 border-white">
+          <div className="flex items-center justify-between text-xs font-mono text-white">
+            <span className="uppercase tracking-wider">TETRA OS // HACKATHON BUILD</span>
+            <span className="opacity-60 uppercase tracking-wider">
+              CONNECTION: {isConnected ? "ACTIVE" : "SECURE"}
+            </span>
+          </div>
+        </footer>
+      </div>
+
+      {/* Hidden audio element for agent audio playback */}
+      <audio
+        ref={audioRef}
+        autoPlay
+        playsInline
+        style={{ display: "none" }}
+      />
+    </div>
+  );
+}
+
+// =============================================
+// Timeline component (moved from page.tsx)
+// =============================================
+
+function Timeline({
+  events,
+  showCurrentTime,
+}: {
+  events: Event[];
+  showCurrentTime: boolean;
+}) {
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+
+  const getEventStyle = (event: Event) => {
+    if (!event.start) return {};
+
+    const start = new Date(event.start);
+    const end = event.end
+      ? new Date(event.end)
+      : new Date(start.getTime() + 60 * 60 * 1000);
+
+    const startHour = start.getHours() + start.getMinutes() / 60;
+    const endHour = end.getHours() + end.getMinutes() / 60;
+    const duration = endHour - startHour;
+
+    const hourHeight = 60;
+    const top = startHour * hourHeight;
+    const height = Math.max(duration * hourHeight, 30);
+
+    return {
+      top: `${top}px`,
+      height: `${height}px`,
+    };
+  };
+
+  return (
+    <div className="relative h-full">
+      <div className="h-full overflow-y-auto custom-scrollbar">
+        <div className="relative min-h-[1440px]">
+          {/* Hour slots */}
+          <div className="relative">
+            {hours.map((hour) => (
+              <div
+                key={hour}
+                className="flex items-start h-[60px] border-t border-white/20"
+              >
+                <div className="w-16 pr-3 text-right text-xs font-mono text-white opacity-60 -mt-2">
+                  {hour.toString().padStart(2, "0")}:00
+                </div>
+                <div className="flex-1 relative" />
+              </div>
+            ))}
+          </div>
+
+          {/* Events layer */}
+          <div className="absolute top-0 left-16 right-0">
+            {events.length === 0 ? (
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center py-12">
+                <p className="text-white font-mono text-sm opacity-80">
+                  NO EVENTS SCHEDULED
+                </p>
+                <p className="text-white text-xs mt-2 opacity-60">
+                  SAY &quot;TALK TO TETRA&quot; TO ADD EVENTS
+                </p>
+              </div>
+            ) : (
+              events.map((event) => (
+                <EventCard
+                  key={event.id}
+                  id={event.id}
+                  name={event.name}
+                  description={event.description}
+                  start={event.start}
+                  end={event.end}
+                  style={getEventStyle(event)}
+                />
+              ))
+            )}
+          </div>
+
+          {/* Current time indicator */}
+          {showCurrentTime && <CurrentTimeIndicator />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================
+// Current time indicator (moved from page.tsx)
+// =============================================
+
+function CurrentTimeIndicator() {
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+  const top = currentHour * 60;
+
+  return (
+    <div
+      className="absolute left-0 right-0 flex items-center z-10 pointer-events-none"
+      style={{ top: `${top}px` }}
+    >
+      <div className="w-16 pr-2 flex justify-end">
+        <div className="w-2 h-2 bg-white" />
+      </div>
+      <div className="flex-1 h-[2px] bg-white" />
+    </div>
+  );
+}
+
+// =============================================
+// Tasks list component (moved from page.tsx)
+// =============================================
+
+function TasksList({ tasks }: { tasks: Task[] }) {
+  if (tasks.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-white font-mono text-sm opacity-80">NO TASKS FOR TODAY</p>
+        <p className="text-white text-xs mt-2 opacity-60">
+          ADD TASKS WITH VOICE COMMANDS
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 overflow-y-auto custom-scrollbar max-h-[calc(100%-2rem)]">
+      {tasks.map((task) => (
+        <div
+          key={task.id}
+          className={`p-4 border-2 transition-colors cursor-pointer ${
+            task.done
+              ? "border-white/20 bg-black/40 opacity-60"
+              : "border-white/40 bg-black/20 hover:bg-white/5"
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={`w-4 h-4 border-2 mt-0.5 flex-shrink-0 flex items-center justify-center ${
+                task.done
+                  ? "border-white bg-white/20"
+                  : "border-white/60"
+              }`}
+            >
+              {task.done && (
+                <svg
+                  className="w-3 h-3 text-white"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={3}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <p
+                className={`font-mono text-sm uppercase tracking-wider ${
+                  task.done ? "text-white/50 line-through" : "text-white"
+                }`}
+              >
+                {task.name || "UNTITLED TASK"}
+              </p>
+              {task.due && (
+                <p className="text-xs text-white/60 mt-1 font-mono">
+                  DUE:{" "}
+                  {new Date(task.due).toLocaleTimeString("en-US", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                    hour12: true,
+                  }).toUpperCase()}
+                </p>
+              )}
+              {task.description && (
+                <p className="text-xs text-white/60 mt-1 truncate font-mono">
+                  {task.description}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// =============================================
+// Tetrahedron icon with glow support
+// =============================================
+
+function TetrahedronIcon({ isConnected }: { isConnected?: boolean }) {
+  return (
+    <svg viewBox="0 0 100 100" className="w-full h-full" style={{ color: 'rgb(253, 247, 228)' }}>
+      {/* Outer triangle */}
+      <polygon
+        points="50,10 10,90 90,90"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className={isConnected ? "animate-pulse" : ""}
+      />
+      {/* Inner 3D face - left */}
+      <polygon
+        points="50,10 50,60 10,90"
+        fill="currentColor"
+        fillOpacity={isConnected ? "0.2" : "0.1"}
+        stroke="currentColor"
+        strokeWidth="1"
+      />
+      {/* Inner 3D face - right */}
+      <polygon
+        points="50,10 50,60 90,90"
+        fill="currentColor"
+        fillOpacity={isConnected ? "0.15" : "0.05"}
+        stroke="currentColor"
+        strokeWidth="1"
+      />
+      {/* Bottom edge */}
+      <line
+        x1="50"
+        y1="60"
+        x2="10"
+        y2="90"
+        stroke="currentColor"
+        strokeWidth="1"
+        opacity="0.5"
+      />
+      <line
+        x1="50"
+        y1="60"
+        x2="90"
+        y2="90"
+        stroke="currentColor"
+        strokeWidth="1"
+        opacity="0.5"
+      />
+    </svg>
+  );
+}
+
+// =============================================
+// Utility: format time for system feed
+// =============================================
+
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}

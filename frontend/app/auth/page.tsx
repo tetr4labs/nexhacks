@@ -86,11 +86,22 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="relative min-h-screen bg-[#0a0a0a] cyber-grid overflow-hidden flex items-center justify-center px-4">
+    <div className="relative min-h-screen bg-black cyber-grid overflow-hidden flex items-center justify-center px-4">
+      {/* High contrast grid overlay */}
+      <div className="absolute inset-0 pointer-events-none opacity-30">
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(255,255,255,0.1) 39px, rgba(255,255,255,0.1) 40px), repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(255,255,255,0.1) 39px, rgba(255,255,255,0.1) 40px)",
+          }}
+        />
+      </div>
+
       {/* Background gradient effects */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-[#00ffff] opacity-10 blur-[120px] rounded-full" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-[#ff00ff] opacity-10 blur-[120px] rounded-full" />
+        <div className="absolute -top-40 -right-40 w-96 h-96 bg-white opacity-10 blur-[140px] rounded-full" />
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-white opacity-5 blur-[140px] rounded-full" />
       </div>
 
       {/* Auth container */}
@@ -104,27 +115,27 @@ export default function AuthPage() {
                 <polygon 
                   points="50,10 10,90 90,90" 
                   fill="none" 
-                  stroke="#00ffff" 
+                  stroke="#ffffff" 
                   strokeWidth="2"
                   className="group-hover:animate-pulse-glow"
                 />
                 <polygon 
                   points="50,10 50,60 10,90" 
-                  fill="rgba(0,255,255,0.1)" 
-                  stroke="#00ffff" 
+                  fill="rgba(255,255,255,0.08)" 
+                  stroke="#ffffff" 
                   strokeWidth="1"
                 />
               </svg>
             </div>
-            <span className="font-mono text-2xl font-bold text-[#00ffff] tracking-wider">
+            <span className="font-mono text-2xl font-bold text-white tracking-[0.3em] uppercase">
               TETRA
             </span>
           </Link>
           
-          <h1 className="text-3xl font-bold text-white font-mono mb-2">
+          <h1 className="text-3xl font-bold text-white font-mono mb-2 uppercase tracking-[0.1em]">
             {isSignUp ? "Create Account" : "Welcome Back"}
           </h1>
-          <p className="text-zinc-400 text-sm">
+          <p className="text-white/70 text-sm font-mono uppercase tracking-[0.2em]">
             {isSignUp 
               ? "Initialize your Tetra OS profile" 
               : "Access your command console"}
@@ -132,9 +143,9 @@ export default function AuthPage() {
         </div>
 
         {/* Auth form panel */}
-        <div className="glass-panel p-8">
+        <div className="glass-panel p-8 border-2 border-white bg-black/70">
           {/* Mode toggle */}
-          <div className="flex mb-6 border border-zinc-800 rounded-lg overflow-hidden">
+          <div className="flex mb-6 border-2 border-white overflow-hidden">
             <button
               type="button"
               onClick={() => {
@@ -142,10 +153,10 @@ export default function AuthPage() {
                 setError(null);
                 setMessage(null);
               }}
-              className={`flex-1 py-3 px-4 font-mono text-sm uppercase tracking-wider transition-all ${
+              className={`flex-1 py-3 px-4 font-mono text-sm uppercase tracking-[0.2em] transition-all ${
                 !isSignUp 
-                  ? "bg-[#00ffff]/10 text-[#00ffff] border-r border-[#00ffff]/30" 
-                  : "text-zinc-500 hover:text-zinc-300 border-r border-zinc-800"
+                  ? "bg-white/10 text-white border-r-2 border-white" 
+                  : "text-white/50 hover:text-white border-r-2 border-white/40"
               }`}
             >
               Sign In
@@ -157,10 +168,10 @@ export default function AuthPage() {
                 setError(null);
                 setMessage(null);
               }}
-              className={`flex-1 py-3 px-4 font-mono text-sm uppercase tracking-wider transition-all ${
+              className={`flex-1 py-3 px-4 font-mono text-sm uppercase tracking-[0.2em] transition-all ${
                 isSignUp 
-                  ? "bg-[#00ffff]/10 text-[#00ffff]" 
-                  : "text-zinc-500 hover:text-zinc-300"
+                  ? "bg-white/10 text-white" 
+                  : "text-white/50 hover:text-white"
               }`}
             >
               Sign Up
@@ -169,7 +180,7 @@ export default function AuthPage() {
 
           {/* Error message */}
           {error && (
-            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded text-red-400 text-sm font-mono">
+            <div className="mb-4 p-3 bg-red-500/10 border-2 border-red-500/40 text-red-300 text-sm font-mono uppercase tracking-[0.15em]">
               <span className="text-red-500 mr-2">ERROR:</span>
               {error}
             </div>
@@ -177,7 +188,7 @@ export default function AuthPage() {
 
           {/* Success message */}
           {message && (
-            <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded text-green-400 text-sm font-mono">
+            <div className="mb-4 p-3 bg-green-500/10 border-2 border-green-500/40 text-green-300 text-sm font-mono uppercase tracking-[0.15em]">
               <span className="text-green-500 mr-2">SUCCESS:</span>
               {message}
             </div>
@@ -189,7 +200,7 @@ export default function AuthPage() {
             <div>
               <label 
                 htmlFor="email" 
-                className="block text-sm font-mono text-zinc-400 mb-2 uppercase tracking-wider"
+                className="block text-xs font-mono text-white/70 mb-2 uppercase tracking-[0.2em]"
               >
                 Email Address
               </label>
@@ -200,7 +211,7 @@ export default function AuthPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="user@tetra.os"
                 required
-                className="input-cyber"
+                className="w-full border-2 border-white bg-black text-white font-mono px-4 py-3 focus:outline-none focus:border-white placeholder:text-white/40"
                 disabled={isLoading}
               />
             </div>
@@ -209,7 +220,7 @@ export default function AuthPage() {
             <div>
               <label 
                 htmlFor="password" 
-                className="block text-sm font-mono text-zinc-400 mb-2 uppercase tracking-wider"
+                className="block text-xs font-mono text-white/70 mb-2 uppercase tracking-[0.2em]"
               >
                 Password
               </label>
@@ -221,7 +232,7 @@ export default function AuthPage() {
                 placeholder="••••••••"
                 required
                 minLength={6}
-                className="input-cyber"
+                className="w-full border-2 border-white bg-black text-white font-mono px-4 py-3 focus:outline-none focus:border-white placeholder:text-white/40"
                 disabled={isLoading}
               />
             </div>
@@ -231,7 +242,7 @@ export default function AuthPage() {
               <div>
                 <label 
                   htmlFor="confirmPassword" 
-                  className="block text-sm font-mono text-zinc-400 mb-2 uppercase tracking-wider"
+                  className="block text-xs font-mono text-white/70 mb-2 uppercase tracking-[0.2em]"
                 >
                   Confirm Password
                 </label>
@@ -243,7 +254,7 @@ export default function AuthPage() {
                   placeholder="••••••••"
                   required
                   minLength={6}
-                  className="input-cyber"
+                  className="w-full border-2 border-white bg-black text-white font-mono px-4 py-3 focus:outline-none focus:border-white placeholder:text-white/40"
                   disabled={isLoading}
                 />
               </div>
@@ -268,10 +279,10 @@ export default function AuthPage() {
 
           {/* Forgot password link (sign in only) */}
           {!isSignUp && (
-            <p className="mt-4 text-center text-sm text-zinc-500">
+            <p className="mt-4 text-center text-xs text-white/60 font-mono uppercase tracking-[0.2em]">
               <button 
                 type="button"
-                className="text-[#00ffff]/60 hover:text-[#00ffff] transition-colors font-mono"
+                className="text-white/70 hover:text-white transition-colors"
                 onClick={() => {
                   // TODO: Implement password reset flow
                   setMessage("Password reset functionality coming soon.");
@@ -284,10 +295,10 @@ export default function AuthPage() {
         </div>
 
         {/* Back to home link */}
-        <p className="mt-6 text-center text-sm text-zinc-500">
+        <p className="mt-6 text-center text-xs text-white/60 font-mono uppercase tracking-[0.2em]">
           <Link 
             href="/" 
-            className="text-zinc-400 hover:text-[#00ffff] transition-colors font-mono inline-flex items-center gap-2"
+            className="text-white/70 hover:text-white transition-colors inline-flex items-center gap-2"
           >
             <span>←</span>
             <span>Return to main terminal</span>
@@ -304,7 +315,7 @@ export default function AuthPage() {
 function LoadingSpinner() {
   return (
     <svg 
-      className="animate-spin h-5 w-5 text-[#00ffff]" 
+      className="animate-spin h-5 w-5 text-white" 
       xmlns="http://www.w3.org/2000/svg" 
       fill="none" 
       viewBox="0 0 24 24"

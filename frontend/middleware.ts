@@ -10,8 +10,10 @@ export async function middleware(request: NextRequest) {
   // Update session (refresh tokens if needed) - this returns a response with updated cookies
   let response = await updateSession(request);
 
+  const pathname = request.nextUrl.pathname;
+
   // Only protect /api routes
-  if (request.nextUrl.pathname.startsWith('/api')) {
+  if (pathname.startsWith('/api') || pathname.startsWith('/auth')) {
     // Create Supabase client to check authentication
     // Use the response from updateSession to get updated cookies
     const supabase = createServerClient(
@@ -39,11 +41,17 @@ export async function middleware(request: NextRequest) {
     } = await supabase.auth.getUser();
 
     // If not authenticated, return 401
-    if (authError || !user) {
+    if (pathname.startsWith('/api') && (authError || !user)) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
+    }
+
+    if (pathname.startsWith('/auth') && !authError && user) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = '/console';
+      return NextResponse.redirect(redirectUrl);
     }
   }
 
