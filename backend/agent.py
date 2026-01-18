@@ -23,34 +23,6 @@ load_dotenv(dotenv_path=".env.local")
 logger = logging.getLogger("tetra-agent")
 logger.setLevel(logging.INFO)
 
-# --- AGENT LOGIC ---
-
-class TetraAgent(Agent):
-    def __init__(self, tools: list) -> None:
-        super().__init__(
-            instructions=(
-                "You are a voice assistant named Tetra. Your purpose is to help with task creation, "
-                "event scheduling, and accountability tracking. "
-                "DO NOT INTRODUCE YOURSELF. Ask the user what you can schedule or what they want to do today."
-                "Respond in plain text only. Keep replies brief."
-            ),
-            tools=tools,
-        )
-
-    # Note: We keep this as a custom method we call manually
-    async def say_hello(self):
-        logger.info("[Agent] Generating greeting...")
-        try:
-            await self.session.generate_reply(
-                instructions="Ask the user what you can schedule or what they want to do today."
-            )
-            logger.info("[Agent] Greeting generated and should be playing")
-        except Exception as e:
-            logger.error(f"[Agent] Error generating greeting: {e}", exc_info=True)
-            raise
-
-# --- SERVER SETUP ---
-
 server = AgentServer()
 
 def prewarm(proc: JobProcess):
@@ -122,7 +94,15 @@ async def entrypoint(ctx: JobContext):
 
     # 6. Start the Agent
     # FIX: Pass tetra_tools.tools (the list), not tetra_tools (the instance)
-    agent = TetraAgent(tools=tetra_tools.tools)
+    agent = Agent(
+            instructions=(
+                "You are a voice assistant named Tetra. Your purpose is to help with task creation, "
+                "event scheduling, and accountability tracking. "
+                "DO NOT INTRODUCE YOURSELF. Ask the user what you can schedule or what they want to do today."
+                "Respond in plain text only. Keep replies brief."
+            ),
+            fnc_ctx=tetra_tools
+        )
 
     # Start the session with proper audio configuration
     await session.start(
@@ -144,12 +124,18 @@ async def entrypoint(ctx: JobContext):
     await asyncio.sleep(0.5)
     
     # Trigger the greeting - this will generate TTS audio
-    logger.info("[Agent] Triggering greeting...")
+    logger.info("[Agent] Generating greeting...")
     try:
-        await agent.say_hello()
-        logger.info("[Agent] Greeting sent successfully")
+        await self.session.generate_reply(
+            instructions="Ask the user what you can schedule or what they want to do today."
+        )
+        logger.info("[Agent] Greeting generated and should be playing")
     except Exception as e:
-        logger.error(f"[Agent] Error sending greeting: {e}", exc_info=True)
+        logger.error(f"[Agent] Error generating greeting: {e}", exc_info=True)
+        raise
+
+def main():
+    cli.run_app(server)
 
 if __name__ == "__main__":
-    cli.run_app(server)
+    main()

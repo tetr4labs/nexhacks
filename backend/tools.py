@@ -12,7 +12,6 @@ class TetraTools:
     A collection of tools to manage scheduling and tasks via Supabase.
     """
     def __init__(self, url: str, key: str, user_jwt: str):
-        # We no longer call super().__init__() because we are a plain Python class.
         headers = {"Authorization": f"Bearer {user_jwt}"}
         self.supabase: Client = create_client(url, key, options={'global': {'headers': headers}})
 
@@ -21,7 +20,6 @@ class TetraTools:
     def tools(self) -> list[llm.FunctionTool]:
         """
         Returns the list of FunctionTools to be passed to the Agent.
-        This allows you to do: agent = Agent(tools=tetra_tools.tools)
         """
         return [
             llm.FunctionTool.from_callable(self.get_day_context),
@@ -31,8 +29,9 @@ class TetraTools:
         ]
 
     # --- TOOL METHODS ---
-    # Note: We removed @llm.ai_callable. 
-    # The SDK now uses the docstring for the description and Annotated for arg types.
+    # We use standard Python Annotated[type, "description"]
+    # We REMOVE the 'ctx' argument because you are manually creating tools via from_callable,
+    # and unless you configured the agent to inject context specifically, simpler is safer here.
 
     async def get_day_context(
         self, 
@@ -43,7 +42,6 @@ class TetraTools:
         """
         logger.info(f"Fetching context for {date}")
         try:
-            # Fetch Events
             start_filter = f"{date}T00:00:00"
             end_filter = f"{date}T23:59:59"
             
@@ -57,7 +55,6 @@ class TetraTools:
             )
             events = events_response.data
 
-            # Fetch Tasks (not done)
             tasks_response = (
                 self.supabase.table("tasks")
                 .select("*")
@@ -72,7 +69,6 @@ class TetraTools:
                 context_str += "- No fixed events scheduled.\n"
             else:
                 for e in events:
-                    # Clean ISO string handling
                     start_str = e["start"].replace('Z', '+00:00')
                     dt = datetime.fromisoformat(start_str)
                     time_str = dt.strftime("%H:%M")
@@ -106,7 +102,6 @@ class TetraTools:
         """
         logger.info(f"Scheduling: {title} at {start_iso}")
         try:
-            # Parse to ensure valid format before sending
             start_dt = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
             end_dt = start_dt + timedelta(minutes=duration_minutes)
             
